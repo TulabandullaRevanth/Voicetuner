@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  frontend-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck app + web
+        run: bun run typecheck
+
+      - name: Build web smoke test
+        run: bun run build:web
+
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements-ci.txt
+
+      - name: Install test dependencies
+        run: pip install -r backend/requirements-ci.txt
+
+      - name: Run unit tests
+        working-directory: backend
+        run: |
+          pytest tests/ -q \
+            --ignore=tests/test_all_models_e2e.py \
+            --ignore=tests/test_generation_download.py \
+            --ignore=tests/test_qwen_download.py \
+            --ignore=tests/test_whisper_download.py \
+            --ignore=tests/test_progress.py \
+            --ignore=tests/test_offline_patch.py

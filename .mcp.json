@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "voicetuner": {
+      "type": "http",
+      "url": "http://127.0.0.1:17493/mcp",
+      "headers": {
+        "X-VoiceTuner-Client-Id": "claude-code"
+      }
+    }
+  }
+}
