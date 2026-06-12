@@ -1,0 +1,58 @@
+# VoiceTuner — local development stack
+#
+# Used by ./start.sh — do not run this directly.
+# Backend is exposed on 127.0.0.1:17493 (no nginx/TLS).
+# The Vite dev server runs outside Docker for hot-reload.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: voicetuner
+      POSTGRES_USER: voicetuner
+      POSTGRES_PASSWORD: voicetuner_dev
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voicetuner -d voicetuner"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  voicetuner:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:17493:17493"
+    environment:
+      - LOG_LEVEL=debug
+      - NUMBA_CACHE_DIR=/tmp/numba_cache
+      - DATABASE_URL=postgresql://voicetuner:voicetuner_dev@postgres:5432/voicetuner
+      - SARVAM_API_KEY=${SARVAM_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - TTS_PROVIDER=${TTS_PROVIDER:-auto}
+      - STT_PROVIDER=${STT_PROVIDER:-auto}
+      - VOICETUNER_WHISPER_PREFETCH=${VOICETUNER_WHISPER_PREFETCH:-base}
+    volumes:
+      - voicetuner-dev-data:/app/data
+      - huggingface-dev-cache:/home/voicetuner/.cache/huggingface
+      - whisper-dev-cache:/home/voicetuner/.cache/whisper
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:17493/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+
+volumes:
+  postgres-dev-data:
+  voicetuner-dev-data:
+  huggingface-dev-cache:
+  whisper-dev-cache:

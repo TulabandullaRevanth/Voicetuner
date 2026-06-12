@@ -3,7 +3,7 @@
 import logging
 import uuid
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from .. import config
@@ -24,26 +24,18 @@ logger = logging.getLogger(__name__)
 # Initialized by init_db()
 engine = None
 SessionLocal = None
-_db_path = None
 
 
 def init_db() -> None:
     """Initialize the database engine, run migrations, create tables, and seed data."""
-    global engine, SessionLocal, _db_path
-
-    _db_path = config.get_db_path()
-    _db_path.parent.mkdir(parents=True, exist_ok=True)
+    global engine, SessionLocal
 
     engine = create_engine(
-        f"sqlite:///{_db_path}",
-        connect_args={"check_same_thread": False},
+        config.get_database_url(),
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
     )
-
-    # Enable WAL mode so concurrent readers never block a writer.
-    @event.listens_for(engine, "connect")
-    def _set_wal_mode(conn, _record):
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
 
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

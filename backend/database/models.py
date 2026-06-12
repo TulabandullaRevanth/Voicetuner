@@ -1,4 +1,4 @@
-"""ORM model definitions for the voicetuner SQLite database."""
+"""ORM model definitions for the VoiceTuner PostgreSQL database."""
 
 from datetime import datetime
 import uuid

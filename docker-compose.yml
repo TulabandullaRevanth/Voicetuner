@@ -1,14 +1,34 @@
-# VoiceTuner — on-prem Docker Compose stack
+# VoiceTuner — on-prem production stack
 #
-# Quick start:
-#   1. bash scripts/gen-certs.sh          # generate self-signed TLS cert (one-time)
-#   2. cp .env.example .env && $EDITOR .env  # add SARVAM_API_KEY etc.
+# Quick start (production):
+#   1. bash scripts/gen-certs.sh            # one-time TLS cert
+#   2. cp .env.example .env && $EDITOR .env # add API keys
 #   3. docker compose up -d
+#
+# For local dev use ./start.sh instead — no TLS, hot-reload frontend.
 #
 # The API is reachable at https://localhost (port 443).
 # HTTP on port 80 auto-redirects to HTTPS.
 
 services:
+  # ── postgres ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: voicetuner
+      POSTGRES_USER: voicetuner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-voicetuner_dev}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - voicetuner-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voicetuner -d voicetuner"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # ── nginx: TLS termination + reverse proxy ───────────────────────────
   nginx:
     image: nginx:1.27-alpine
@@ -39,6 +59,9 @@ services:
       - LOG_LEVEL=info
       - NUMBA_CACHE_DIR=/tmp/numba_cache
 
+      # ── Database ──────────────────────────────────────────────────────
+      - DATABASE_URL=postgresql://voicetuner:${POSTGRES_PASSWORD:-voicetuner_dev}@postgres:5432/voicetuner
+
       # ── Speech providers ─────────────────────────────────────────────
       # Sarvam AI — required for Hindi/Telugu TTS+STT (free tier).
       # Get a key at https://dashboard.sarvam.ai
@@ -53,7 +76,6 @@ services:
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
 
       # ── Language / provider routing ──────────────────────────────────
-      # Override which provider handles each modality (auto | local | sarvam | groq).
       - TTS_PROVIDER=${TTS_PROVIDER:-auto}
       - STT_PROVIDER=${STT_PROVIDER:-auto}
 
@@ -61,14 +83,13 @@ services:
       - VOICETUNER_WHISPER_PREFETCH=${VOICETUNER_WHISPER_PREFETCH:-base}
 
     volumes:
-      # Named volume for all persistent data (profiles, DB, captures, audio).
       - voicetuner-data:/app/data
-
-      # HuggingFace model cache — survives container rebuilds.
       - huggingface-cache:/home/voicetuner/.cache/huggingface
-
-      # Whisper model cache.
       - whisper-cache:/home/voicetuner/.cache/whisper
+
+    depends_on:
+      postgres:
+        condition: service_healthy
 
     networks:
       - voicetuner-net
@@ -84,6 +105,7 @@ networks:
     driver: bridge
 
 volumes:
+  postgres-data:
   voicetuner-data:
   huggingface-cache:
   whisper-cache:

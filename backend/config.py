@@ -100,9 +100,17 @@ def resolve_storage_path(path: str | Path | None) -> Path | None:
     return (_data_dir / stored_path).resolve()
 
 
-def get_db_path() -> Path:
-    """Get database file path."""
-    return _data_dir / "voicetuner.db"
+def get_database_url() -> str:
+    """Return the PostgreSQL connection URL from DATABASE_URL env var."""
+    import os
+    url = os.environ.get(
+        "DATABASE_URL",
+        "postgresql://voicetuner:voicetuner_dev@localhost:5432/voicetuner",
+    )
+    # SQLAlchemy 1.4+ requires 'postgresql://' not 'postgres://'
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return url
 
 
 def get_profiles_dir() -> Path:

@@ -1,25 +1,16 @@
-"""Column-level migrations for the voicetuner SQLite database.
+"""Column-level migrations for the VoiceTuner PostgreSQL database.
 
-Why not Alembic?  voicetuner is a single-user desktop app shipping as a
-PyInstaller binary.  Every user has exactly one SQLite file.  Alembic's
-strengths -- migration tracking across environments, rollback, team
-coordination -- don't apply here and would add bundling complexity
-(alembic.ini, env.py, versions/ directory all need to survive
-PyInstaller).  The column-existence checks below are idempotent, run in
-<50 ms on startup, and have worked reliably across 12 schema changes.
-If the project ever moves to a server-based deployment or Postgres, this
-decision should be revisited.
+Each helper checks column/table existence before acting (idempotent) and
+logs a short message when it does real work. Runs in <100 ms on startup.
 
 Adding a new migration:
     1. Append a new ``_migrate_*`` helper at the bottom of this file.
     2. Call it from ``run_migrations()`` in the appropriate spot.
-    3. The helper should check column/table existence before acting
-       (idempotent) and print a short message when it does real work.
+    3. The helper must be idempotent (check existence before ALTER).
 """
 
 import json
 import logging
-import sqlite3
 
 from sqlalchemy import inspect, text
 
@@ -97,33 +88,9 @@ def _migrate_story_items(engine, inspector, tables: set[str]) -> None:
                     current_time_ms += int((duration or 0) * 1000) + 200
                 conn.commit()
 
-            # Recreate table without the position column (SQLite lacks DROP COLUMN)
-            conn.execute(text("""
-                CREATE TABLE story_items_new (
-                    id VARCHAR PRIMARY KEY,
-                    story_id VARCHAR NOT NULL,
-                    generation_id VARCHAR NOT NULL,
-                    start_time_ms INTEGER NOT NULL DEFAULT 0,
-                    track INTEGER NOT NULL DEFAULT 0,
-                    trim_start_ms INTEGER NOT NULL DEFAULT 0,
-                    trim_end_ms INTEGER NOT NULL DEFAULT 0,
-                    version_id VARCHAR,
-                    created_at DATETIME,
-                    FOREIGN KEY (story_id) REFERENCES stories(id),
-                    FOREIGN KEY (generation_id) REFERENCES generations(id)
-                )
-            """))
-            conn.execute(text("""
-                INSERT INTO story_items_new (id, story_id, generation_id, start_time_ms, track, trim_start_ms, trim_end_ms, version_id, created_at)
-                SELECT id, story_id, generation_id, start_time_ms,
-                    COALESCE(track, 0), COALESCE(trim_start_ms, 0), COALESCE(trim_end_ms, 0), version_id, created_at
-                FROM story_items
-            """))
-            conn.execute(text("DROP TABLE story_items"))
-            conn.execute(text("ALTER TABLE story_items_new RENAME TO story_items"))
+            conn.execute(text("ALTER TABLE story_items DROP COLUMN IF EXISTS position"))
             conn.commit()
 
-        # Re-read after table recreation
         columns = _get_columns(inspector, "story_items")
 
     if "track" not in columns:
@@ -265,24 +232,10 @@ def _migrate_mcp_bindings(engine, inspector, tables: set[str]) -> None:
             "default_personality",
         )
     if "default_intent" in columns:
-        if _supports_drop_column(engine):
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE mcp_client_bindings DROP COLUMN default_intent"))
-                conn.commit()
-            logger.info("Dropped legacy default_intent column from mcp_client_bindings")
-        else:
-            # ALTER TABLE … DROP COLUMN on SQLite requires 3.35+ (Mar
-            # 2021). Production PyInstaller builds bundle Python 3.12
-            # which links to SQLite 3.40+; this branch only fires for
-            # dev environments running the backend directly against an
-            # old system SQLite (Ubuntu 20.04 = 3.31, Debian 11 = 3.34).
-            # Leaving the unused column in place is harmless — the ORM
-            # only maps declared columns, so a stray one does no work
-            # and gets no reads or writes.
-            logger.warning(
-                "SQLite %s too old to DROP COLUMN (need 3.35+); leaving unused default_intent column on mcp_client_bindings in place.",
-                sqlite3.sqlite_version,
-            )
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE mcp_client_bindings DROP COLUMN IF EXISTS default_intent"))
+            conn.commit()
+        logger.info("Dropped legacy default_intent column from mcp_client_bindings")
 
 
 def _migrate_language_codes(engine, inspector, tables: set[str]) -> None:
@@ -351,15 +304,6 @@ def _migrate_speaker_id(engine, inspector, tables: set[str]) -> None:
             _add_column(engine, "captures", "identified_profile_name VARCHAR", "identified_profile_name")
         if "speaker_confidence" not in cols:
             _add_column(engine, "captures", "speaker_confidence FLOAT", "speaker_confidence")
-
-
-def _supports_drop_column(engine) -> bool:
-    """Whether ``ALTER TABLE … DROP COLUMN`` is supported by the dialect +
-    runtime. Non-SQLite dialects (Postgres, MySQL) have supported it for
-    decades; SQLite only gained the feature in 3.35."""
-    if engine.dialect.name != "sqlite":
-        return True
-    return tuple(int(p) for p in sqlite3.sqlite_version.split(".")[:3]) >= (3, 35, 0)
 
 
 def _normalize_storage_paths(engine, tables: set[str]) -> None:
