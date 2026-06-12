@@ -11,11 +11,10 @@ This guide gets you running on **free API tiers only**.
 
 ## 1. Prerequisites
 
-- **Python** 3.12 or 3.13
-- **Bun** (https://bun.sh)
+- **Docker** (https://docs.docker.com/get-docker/) — runs PostgreSQL + the FastAPI backend
+- **Bun** (https://bun.sh) — runs the Vite dev server
 - **Rust** toolchain (for the desktop app via Tauri) — optional if you only run
   the web UI
-- **ffmpeg** on your PATH (audio decoding)
 
 ---
 
@@ -51,16 +50,19 @@ VOICE_CLONE_PROVIDER=auto
 ## 3. Install & run
 
 ```bash
-just setup            # python venv + deps, bun install
-just dev              # backend (:17493) + desktop app (Tauri)
-# or, web UI instead of desktop:
-just dev:web          # backend + web SPA
+cp .env.example .env    # add SARVAM_API_KEY (minimum required)
+./start.sh              # PostgreSQL + backend in Docker, then Vite dev server
 ```
 
-Backend only (REST + docs at http://localhost:17493/docs):
+`./start.sh` starts PostgreSQL and the FastAPI backend in Docker (`docker-compose.dev.yml`), waits for the health check, then launches the Vite dev server locally. Press Ctrl+C to stop everything.
+
+- Web UI: `http://localhost:5173`
+- Backend API + docs: `http://localhost:17493/docs`
+
+Backend only:
 
 ```bash
-just dev:backend      # uvicorn backend.main:app --port 17493
+docker compose -f docker-compose.dev.yml up -d
 ```
 
 ---

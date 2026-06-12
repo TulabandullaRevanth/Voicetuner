@@ -5,17 +5,16 @@ FastAPI server powering voice cloning, speech generation, and audio processing. 
 ## Running
 
 ```bash
-# Via justfile (recommended)
-just dev:server
+# Recommended — starts PostgreSQL + backend together via Docker Compose
+docker compose -f docker-compose.dev.yml up -d
 
-# Standalone
-python -m backend.main --host 127.0.0.1 --port 17493
-
-# With custom data directory
-python -m backend.main --data-dir /path/to/data
+# Or via the single-command launcher from the repo root
+./start.sh
 ```
 
-The server auto-initializes the SQLite database on first startup. Models are downloaded from HuggingFace on first use.
+The server connects to PostgreSQL on startup and runs any pending migrations automatically. Models are downloaded from HuggingFace on first use.
+
+`DATABASE_URL` defaults to `postgresql://voicetuner:voicetuner_dev@postgres:5432/voicetuner` (configured in `docker-compose.dev.yml`). Override via env var for production.
 
 ## Architecture
 
@@ -56,7 +55,7 @@ Route handlers are intentionally thin. They validate input, delegate to a servic
 
 **backends/base.py** -- Shared utilities used across all engine implementations: HuggingFace cache checks, device detection, voice prompt combination, progress tracking.
 
-**database/** -- SQLAlchemy ORM models with a re-exporting `__init__.py` for backward compatibility. Migrations run automatically on startup.
+**database/** -- SQLAlchemy ORM models backed by PostgreSQL. Session factory uses `psycopg2` with `pool_size=10, max_overflow=20`. Migrations run automatically on startup.
 
 ### Backend selection
 
@@ -111,12 +110,13 @@ curl http://localhost:17493/generate/{id}/status
 
 ```
 {data_dir}/
-  voicetuner.db             # SQLite database
-  profiles/{id}/          # Voice samples per profile
-  generations/            # Generated audio files
-  cache/                  # Voice prompt cache (memory + disk)
-  backends/               # Downloaded CUDA binary (if applicable)
+  profiles/{id}/           # Voice samples per profile
+  generations/             # Generated audio files
+  cache/                   # Voice prompt cache (memory + disk)
+  backends/                # Downloaded CUDA binary (if applicable)
 ```
+
+Database is PostgreSQL (managed by Docker Compose). Audio files and model cache are stored in the `data_dir` volume (`voicetuner-dev-data` in Docker).
 
 Default location is the OS-specific app data directory. Override with `--data-dir` or the `VOICETUNER_DATA_DIR` environment variable.
 
@@ -125,11 +125,11 @@ Default location is the OS-specific app data directory. Override with `--data-di
 Linting and formatting are enforced by [ruff](https://docs.astral.sh/ruff/), configured in `pyproject.toml`. See `STYLE_GUIDE.md` for conventions.
 
 ```bash
-just check-python       # lint + format check
-just fix-python         # auto-fix lint issues + reformat
-just test               # run pytest
+cd backend && ruff check .       # lint
+cd backend && ruff format .      # format
+cd backend && pytest             # run tests
 ```
 
 ## Dependencies
 
-Runtime dependencies are in `requirements.txt`. macOS-only MLX dependencies are in `requirements-mlx.txt`. Dev tools (ruff, pytest) are installed automatically by `just setup-python`.
+Runtime dependencies are in `requirements.txt`. macOS-only MLX dependencies are in `requirements-mlx.txt`.

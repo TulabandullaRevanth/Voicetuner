@@ -1,6 +1,6 @@
 # VoiceTuner Project Status & Roadmap
 
-> Last updated: 2026-04-18 | Current version: **v0.4.1** | 232 open issues | 12 open PRs
+> Last updated: 2026-06-12 | Current version: **v0.5.0**
 
 ---
 

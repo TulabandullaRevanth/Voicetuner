@@ -7,20 +7,13 @@ A production-quality trilingual voice studio (English / Hindi / Telugu) built as
 ## Quick Start
 
 ```bash
-# Install all deps
-just setup
-
-# Start backend + frontend together (dev mode)
-just dev
-
-# Backend only
-just dev:backend          # http://localhost:17493
-
-# Run tests
-just test
+cp .env.example .env    # add SARVAM_API_KEY (minimum required)
+./start.sh              # starts PostgreSQL + backend in Docker, then Vite dev server
 ```
 
-**Required:** Python 3.12+, Rust, Bun  
+`./start.sh` tears everything down on Ctrl+C. Backend API at `http://localhost:17493`, web UI at `http://localhost:5173`.
+
+**Required:** [Docker](https://docs.docker.com/get-docker/), [Bun](https://bun.sh)  
 **Minimum API key needed:** `SARVAM_API_KEY` (free tier) — put it in `.env` at the repo root.
 
 ---
@@ -45,7 +38,7 @@ voicetuner/
 
 ## Architecture in One Sentence
 
-> The **Tauri shell** captures mic audio globally, sends it to the **FastAPI backend** for STT + speaker ID, stores it as a **Capture**, optionally refines the transcript with a local LLM, auto-pastes the result, and also drives TTS generation via 9 local or 3 cloud engines — all persisted in a local **SQLite** database.
+> The **Tauri shell** captures mic audio globally, sends it to the **FastAPI backend** for STT + speaker ID, stores it as a **Capture**, optionally refines the transcript with a local LLM, auto-pastes the result, and also drives TTS generation via 9 local or 3 cloud engines — all persisted in a **PostgreSQL** database (Docker-managed).
 
 ---
 
@@ -135,7 +128,7 @@ Override via env vars: `TTS_PROVIDER`, `STT_PROVIDER`
 
 ## Database Schema (`backend/database/`)
 
-SQLite file lives at `~/.voicetuner/data/voicetuner.db` (or `VOICETUNER_DATA_DIR`).  
+PostgreSQL 16 managed by Docker Compose (`docker-compose.dev.yml`). Connection URL via `DATABASE_URL` env var (default: `postgresql://voicetuner:voicetuner_dev@postgres:5432/voicetuner`).  
 Migrations are custom idempotent helpers in `migrations.py` — they run at startup, no Alembic.
 
 ### Core Tables
@@ -366,7 +359,7 @@ Get a free Sarvam key at [dashboard.sarvam.ai](https://dashboard.sarvam.ai).
 
 ## Key Design Decisions
 
-1. **No Alembic** — custom idempotent migration helpers run at startup. Simple for a single-user SQLite app shipped as a binary.
+1. **No Alembic** — custom idempotent migration helpers run at startup. `ALTER TABLE … IF EXISTS` keeps migrations PostgreSQL-compatible and re-runnable.
 2. **Serial GPU queue** — one TTS generation at a time to avoid GPU memory thrashing.
 3. **Storage path abstraction** — all file paths stored *relative* to the data dir so the app is portable across machines.
 4. **Telugu requires Sarvam** — no open-source local TTS supports Telugu; Sarvam Bulbul is the only free option.

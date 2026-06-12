@@ -45,7 +45,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ Tier 1 — Desktop                                                │
-│  Single user · SQLite · PyInstaller binary · Local models       │
+│  Single user · PostgreSQL (Docker) · Local or cloud models      │
 │  Use case: Individual power user, laptop, air-gapped workstation│
 └─────────────────────────────────────────────────────────────────┘
                               │ same codebase
@@ -548,7 +548,7 @@ tts:
 | `backend/languages.py` | ✅ |
 | `backend/models.py` | ✅ — extend with RBAC models |
 | `backend/database/migrations.py` | ✅ — idempotent migration framework is solid |
-| `backend/database/session.py` | ✅ — extend for PostgreSQL |
+| `backend/database/session.py` | ✅ — PostgreSQL implemented (psycopg2, pool_size=10) |
 | `backend/mcp_server/` | ✅ — entire MCP server |
 | `backend/routes/captures.py` | ✅ |
 | `backend/routes/generations.py` | ✅ |
@@ -965,20 +965,20 @@ CREATE INDEX IF NOT EXISTS idx_profiles_visibility   ON profiles(visibility);
 CREATE INDEX IF NOT EXISTS idx_story_items_story     ON story_items(story_id, start_time_ms);
 ```
 
-### 7.4 SQLite WAL + Tuning
+### 7.4 PostgreSQL Tuning
 
-```python
-# backend/database/session.py
-@event.listens_for(engine, "connect")
-def configure_sqlite(conn, _):
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")   # safe with WAL
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA cache_size=-32000")    # 32 MB
-    conn.execute("PRAGMA mmap_size=268435456")  # 256 MB mmap
-    conn.execute("PRAGMA temp_store=MEMORY")
-    conn.execute("PRAGMA wal_autocheckpoint=1000")
+For high-concurrency deployments edit `postgresql.conf` (or pass via `POSTGRES_*` env vars in Docker Compose):
+
+```ini
+# docker-compose.yml postgres service — command: override
+max_connections = 200
+shared_buffers = 256MB
+effective_cache_size = 768MB
+work_mem = 4MB
+wal_level = replica             # enables streaming replication
 ```
+
+The app-side pool is already configured with `pool_size=10, max_overflow=20, pool_pre_ping=True`.
 
 ### 7.5 Automatic Data Retention
 
@@ -1045,7 +1045,7 @@ totp.verify(user_provided_code)             # 30-second window
 ### 8.2 Encryption at Rest
 
 **API keys — Tier 1 (Desktop):**  
-`tauri-plugin-stronghold` — Tauri's IOTA Stronghold vault backed by the OS keychain. Keys never in SQLite, never in `.env`.
+`tauri-plugin-stronghold` — Tauri's IOTA Stronghold vault backed by the OS keychain. Keys never in the database, never in `.env`.
 
 ```typescript
 // app/src/lib/keychain.ts
@@ -1424,7 +1424,7 @@ class AuditMiddleware:
 
 | Asset | Location | Criticality | RPO |
 |-------|----------|-------------|-----|
-| SQLite/PostgreSQL database | `data/voicetuner.db` or PostgreSQL | Critical | 1 hour |
+| PostgreSQL database | Docker volume `postgres-dev-data` (or external cluster) | Critical | 1 hour |
 | Audio files (profiles, generations, captures) | `data/profiles/`, `data/generations/`, `data/captures/` | High | 4 hours |
 | Config file | `voicetuner.yaml` | High | On change |
 | TTS/STT/LLM models | `models/` | Medium | Weekly (re-downloadable) |
@@ -1598,7 +1598,7 @@ Deliverables:
          utils/platform_detect.py, utils/progress.py, utils/tasks.py
   ✓ Remove 12 dead dependencies from requirements.txt
   ✓ Run pytest — all existing tests pass
-  ✓ Verify: just dev:backend starts in < 10 s (model cold-start separately)
+  ✓ Verify: ./start.sh brings up the full stack in < 10 s (model cold-start separately)
 ```
 
 **Acceptance criteria:** `pytest` green. Backend starts cleanly. No 500 errors on existing routes.
@@ -1659,19 +1659,19 @@ Deliverables:
 
 ### Phase 5 — Database Hardening (Week 7)
 
-**Goal:** Performance, integrity, PostgreSQL support.
+**Goal:** Performance, integrity.
 
 ```
 Deliverables:
-  ✓ SQLite WAL mode + pragma tuning in session.py
+  ✓ PostgreSQL 16 (Docker) — implemented
+  ✓ Connection pooling (pool_size=10, max_overflow=20, pool_pre_ping)
   ✓ Missing indexes migration
   ✓ Retention policy migration
-  ✓ PostgreSQL dialect support in session.py
-  ✓ docker-compose.yml with PostgreSQL service
-  ✓ Test: migrate existing SQLite data to PostgreSQL
+  ✓ docker-compose.yml and docker-compose.dev.yml with PostgreSQL service
+  - Test: load test with 10k generations
 ```
 
-**Acceptance criteria:** List queries on 10k generations < 50 ms. PostgreSQL backend passes all tests.
+**Acceptance criteria:** List queries on 10k generations < 50 ms. Backend health check returns 200 in < 1 s.
 
 ### Phase 6 — Security Hardening (Week 8)
 
@@ -1807,7 +1807,7 @@ Weeks 13-14  Phase 9: QA & Launch
 | LLM | 1 local (Qwen3) | 1 local (Qwen3/Llama) + 1 optional cloud (Groq) |
 | Provider architecture | hardcoded engine dispatch | ProviderRegistry + fallback chains |
 | Deployment config | scattered env vars | single `voicetuner.yaml` |
-| Database backends | SQLite only | SQLite (Tier 1) + PostgreSQL (Tier 2/3) |
+| Database backends | ✅ PostgreSQL (all tiers, Docker-managed) | PostgreSQL cluster (Tier 3) |
 | Authentication | none | session tokens + bcrypt + TOTP (opt.) |
 | RBAC | none | 6 roles, 20+ permissions |
 | Audit logging | none | immutable `audit_log` table |

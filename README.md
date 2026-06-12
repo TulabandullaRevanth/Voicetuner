@@ -376,7 +376,7 @@ Full API documentation available at `http://127.0.0.1:17493/docs`.
 | Native Shim   | Rust (inside Tauri) for global hotkey, paste injection, focus introspection     |
 | Effects       | Pedalboard (Spotify)                                                            |
 | Inference     | MLX (Apple Silicon) / PyTorch (CUDA/ROCm/XPU/CPU)                               |
-| Database      | SQLite                                                                          |
+| Database      | PostgreSQL 16 (Docker)                                                          |
 | Audio         | WaveSurfer.js, librosa                                                          |
 
 ---
@@ -410,21 +410,20 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed setup and contribution guide
 git clone https://github.com/umadevi16177/voice_tuner.git
 cd voicetuner
 
-just setup   # creates Python venv, installs all deps
-just dev     # starts backend + desktop app
+cp .env.example .env    # add your SARVAM_API_KEY
+./start.sh              # starts PostgreSQL + backend in Docker, then Vite dev server
 ```
 
-Install [just](https://github.com/casey/just): `brew install just` or `cargo install just`. Run `just --list` to see all commands.
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/), [Bun](https://bun.sh), and [Xcode](https://developer.apple.com/xcode/) on macOS.
 
-**Prerequisites:** [Bun](https://bun.sh), [Rust](https://rustup.rs), [Python 3.11+](https://python.org), [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/), and [Xcode](https://developer.apple.com/xcode/) on macOS.
+For the desktop app (Tauri): also install [Rust](https://rustup.rs) and [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 The repo ships a pre-wired `.mcp.json` at the root — running Claude Code inside this checkout picks up the VoiceTuner MCP tools automatically once the dev app is running.
 
 ### Building Locally
 
 ```bash
-just build          # Build CPU server binary + Tauri app
-just build-local    # (Windows) Build CPU + CUDA server binaries + Tauri app
+cd tauri && bun run tauri build          # Build CPU server binary + Tauri app
 ```
 
 ### Adding New Voice Models

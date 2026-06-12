@@ -49,7 +49,7 @@ The current codebase carries enormous local-ML weight it no longer needs. Stripp
 | `backend/services/history.py` | ✅ | History queries |
 | `backend/database/migrations.py` | ✅ | Idempotent migration framework |
 | `backend/database/models.py` | ✅ (clean) | ORM models |
-| `backend/database/session.py` | ✅ | SQLite session factory |
+| `backend/database/session.py` | ✅ | PostgreSQL session factory (psycopg2, connection pooling) |
 | `backend/mcp_server/` | ✅ | Full MCP integration |
 | `backend/languages.py` | ✅ | en/hi/te constants |
 | `backend/utils/audio.py` | ✅ | Audio I/O |
@@ -429,21 +429,20 @@ def with_retry(max_attempts=3, base_delay=1.0, retryable_exceptions=(ProviderRat
     return decorator
 ```
 
-### 4.5 SQLite WAL Mode
+### 4.5 PostgreSQL Connection Pooling
 
-Enable Write-Ahead Logging for better read concurrency (multiple readers while writing):
+Already implemented in `backend/database/session.py`:
 
 ```python
-# backend/database/session.py
-from sqlalchemy import event
-
-@event.listens_for(engine, "connect")
-def set_wal_mode(dbapi_connection, _):
-    dbapi_connection.execute("PRAGMA journal_mode=WAL")
-    dbapi_connection.execute("PRAGMA synchronous=NORMAL")
-    dbapi_connection.execute("PRAGMA cache_size=-32000")   # 32 MB page cache
-    dbapi_connection.execute("PRAGMA temp_store=MEMORY")
+engine = create_engine(
+    config.get_database_url(),
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,
+)
 ```
+
+`pool_pre_ping=True` recycles stale connections automatically. For high-concurrency deployments increase `pool_size` and add `pool_timeout=30`.
 
 ### 4.6 Structured Logging
 
@@ -506,13 +505,13 @@ CREATE INDEX IF NOT EXISTS idx_generations_favorited    ON generations(is_favori
 CREATE INDEX IF NOT EXISTS idx_story_items_story ON story_items(story_id, start_time_ms);
 ```
 
-Add these in a `_migrate_indexes()` call in `migrations.py`. SQLite's `CREATE INDEX IF NOT EXISTS` is idempotent.
+Add these in a `_migrate_indexes()` call in `migrations.py`. `CREATE INDEX IF NOT EXISTS` is idempotent in PostgreSQL.
 
 ### 5.3 Remove Stale Columns via Migration
 
 ```sql
 -- generations: model_size is meaningless for cloud APIs
-ALTER TABLE generations DROP COLUMN model_size;  -- SQLite 3.35+
+ALTER TABLE generations DROP COLUMN IF EXISTS model_size;  -- PostgreSQL
 
 -- capture_settings: stt_model and llm_model no longer user-selectable
 ALTER TABLE capture_settings DROP COLUMN stt_model;
@@ -615,7 +614,7 @@ Replace raw provider error strings with user-friendly messages:
 
 ### 7.1 Encrypt API Keys at Rest
 
-Do **not** store plaintext keys in SQLite or `.env`. Use the OS keychain via Tauri's `tauri-plugin-stronghold` (a vault backed by IOTA Stronghold):
+Do **not** store plaintext keys in the database or `.env`. Use the OS keychain via Tauri's `tauri-plugin-stronghold` (a vault backed by IOTA Stronghold):
 
 ```toml
 # tauri/src-tauri/Cargo.toml
@@ -734,7 +733,7 @@ async def generate(...):
 5. Run `pytest` — all tests should still pass (no engine tests remain)
 6. Verify `pip install -r requirements.txt` completes in < 60 s (vs 20+ min today)
 
-**Acceptance:** `just dev:backend` starts in < 2 s. Generation works via Sarvam.
+**Acceptance:** `./start.sh` brings up the stack in < 10 s. Generation works via Sarvam.
 
 ### Phase 2 — Groq LLM Wiring (Week 2)
 **Goal:** Replace local Qwen with Groq for refinement + personality.
@@ -751,7 +750,7 @@ async def generate(...):
 ### Phase 3 — Database & Backend Hardening (Week 3)
 **Goal:** Performance, reliability, and security foundations.
 
-1. Enable SQLite WAL mode in `database/session.py`
+1. ✅ PostgreSQL with connection pooling in `database/session.py` (done)
 2. Add missing indexes via migration
 3. Add `provider_config` table
 4. Add `backend/errors.py` with provider error taxonomy
@@ -786,7 +785,7 @@ async def generate(...):
 5. Add `scripts/check-no-keys.sh` to CI (GitHub Actions)
 6. Add `slowapi` rate limiting to `/captures` and `/generate`
 
-**Acceptance:** Keys not visible in SQLite DB. `strings voicetuner` binary reveals no API keys. MCP endpoint returns 401 from non-loopback without a token.
+**Acceptance:** Keys not visible in the database. `strings voicetuner` binary reveals no API keys. MCP endpoint returns 401 from non-loopback without a token.
 
 ### Phase 6 — Build Pipeline & Distribution (Week 6)
 **Goal:** Signed, notarized, auto-updating desktop binaries.
