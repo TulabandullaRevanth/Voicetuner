@@ -23,7 +23,7 @@ from .models import (
     StoryItem,
     VoiceProfile,
 )
-from .session import engine, SessionLocal, _db_path, init_db, get_db
+from .session import engine, SessionLocal, init_db, get_db
 
 __all__ = [
     # Models
@@ -46,7 +46,6 @@ __all__ = [
     # Session
     "engine",
     "SessionLocal",
-    "_db_path",
     "init_db",
     "get_db",
 ]

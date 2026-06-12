@@ -227,9 +227,7 @@ async def _run_startup(application: FastAPI) -> None:
 
     database.init_db()
 
-    from .database.session import _db_path
-
-    logger.info("Database: %s", _db_path)
+    logger.info("Database: %s", config.get_database_url())
     logger.info("Data directory: %s", config.get_data_dir())
 
     init_queue()
