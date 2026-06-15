@@ -27,7 +27,7 @@ services:
       - STT_PROVIDER=${STT_PROVIDER:-auto}
       - VOICETUNER_WHISPER_PREFETCH=${VOICETUNER_WHISPER_PREFETCH:-base}
     volumes:
-      - voicetuner-dev-data:/app/data
+      - ./data:/app/data
       - huggingface-dev-cache:/home/voicetuner/.cache/huggingface
       - whisper-dev-cache:/home/voicetuner/.cache/whisper
     healthcheck:
@@ -38,6 +38,5 @@ services:
       start_period: 120s
 
 volumes:
-  voicetuner-dev-data:
   huggingface-dev-cache:
   whisper-dev-cache:
