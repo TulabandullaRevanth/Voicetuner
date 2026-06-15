@@ -65,9 +65,11 @@ COPY --chown=voicetuner:voicetuner backend/ /app/backend/
 # Copy built frontend from frontend stage
 COPY --from=frontend --chown=voicetuner:voicetuner /build/web/dist /app/frontend/
 
-# Create data directories owned by non-root user
+# Create data directories and model cache directories owned by non-root user
 RUN mkdir -p /app/data/generations /app/data/profiles /app/data/cache \
-    && chown -R voicetuner:voicetuner /app/data
+    && chown -R voicetuner:voicetuner /app/data \
+    && mkdir -p /home/voicetuner/.cache/huggingface /home/voicetuner/.cache/whisper \
+    && chown -R voicetuner:voicetuner /home/voicetuner/.cache
 
 # Copy the entrypoint script
 COPY --chown=voicetuner:voicetuner scripts/docker-entrypoint.sh /app/docker-entrypoint.sh

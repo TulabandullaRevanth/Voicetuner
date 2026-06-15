@@ -1,3 +1,5 @@
+name: voicetuner
+
 # VoiceTuner — local development stack
 #
 # Used by ./start.sh — do not run this directly.
