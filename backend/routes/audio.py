@@ -4,7 +4,7 @@ import mimetypes
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from .. import config, models
@@ -64,7 +64,7 @@ async def get_audio(generation_id: str, db: Session = Depends(get_db)):
 
 @router.get("/samples/{sample_id}")
 async def get_sample_audio(sample_id: str, db: Session = Depends(get_db)):
-    """Serve profile sample audio file."""
+    """Serve profile sample audio — from file if present, else from DB bytes."""
     from ..database import ProfileSample as DBProfileSample
 
     sample = db.query(DBProfileSample).filter_by(id=sample_id).first()
@@ -72,11 +72,10 @@ async def get_sample_audio(sample_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Sample not found")
 
     audio_path = config.resolve_storage_path(sample.audio_path)
-    if audio_path is None or not audio_path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found")
+    if audio_path and audio_path.exists():
+        return FileResponse(audio_path, media_type="audio/wav", filename=f"sample_{sample_id}.wav")
 
-    return FileResponse(
-        audio_path,
-        media_type="audio/wav",
-        filename=f"sample_{sample_id}.wav",
-    )
+    if sample.audio_data:
+        return Response(content=sample.audio_data, media_type="audio/wav")
+
+    raise HTTPException(status_code=404, detail="Audio file not found")

@@ -37,6 +37,7 @@ def run_migrations(engine) -> None:
     _migrate_language_codes(engine, inspector, tables)
     _migrate_speaker_id(engine, inspector, tables)
     _normalize_storage_paths(engine, tables)
+    _migrate_audio_data(engine, inspector, tables)
 
 
 # -- helpers ---------------------------------------------------------------
@@ -348,3 +349,17 @@ def _normalize_storage_paths(engine, tables: set[str]) -> None:
         if total_fixed > 0:
             conn.commit()
             logger.info("Normalized %d stored file paths", total_fixed)
+
+
+def _migrate_audio_data(engine, inspector, tables: set[str]) -> None:
+    """Add audio_data BYTEA columns to profile_samples and captures.
+
+    These columns store the raw WAV bytes so audio survives even if the
+    ./data directory is lost (Docker volume wipe, new machine, etc.).
+    """
+    for table in ("profile_samples", "captures"):
+        if table not in tables:
+            continue
+        cols = _get_columns(inspector, table)
+        if "audio_data" not in cols:
+            _add_column(engine, table, "audio_data BYTEA", "audio_data")

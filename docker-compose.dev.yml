@@ -28,6 +28,7 @@ services:
       - VOICETUNER_WHISPER_PREFETCH=${VOICETUNER_WHISPER_PREFETCH:-base}
     volumes:
       - ./data:/app/data
+      - ./backend:/app/backend          # live-reload backend code — no rebuild needed
       - huggingface-dev-cache:/home/voicetuner/.cache/huggingface
       - whisper-dev-cache:/home/voicetuner/.cache/whisper
     healthcheck:

@@ -3,7 +3,7 @@
 from datetime import datetime
 import uuid
 
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, ForeignKey, Boolean, JSON
+from sqlalchemy import Column, String, Integer, Float, DateTime, Text, ForeignKey, Boolean, JSON, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 
 from ..utils.capture_chords import (
@@ -59,6 +59,7 @@ class ProfileSample(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     profile_id = Column(String, ForeignKey("profiles.id"), nullable=False)
     audio_path = Column(String, nullable=False)
+    audio_data = Column(LargeBinary, nullable=True)  # WAV bytes — primary persistent store
     reference_text = Column(Text, nullable=False)
 
 
@@ -285,4 +286,5 @@ class Capture(Base):
     identified_profile_id = Column(String, ForeignKey("profiles.id"), nullable=True)
     identified_profile_name = Column(String, nullable=True)  # denormalized for fast reads
     speaker_confidence = Column(Float, nullable=True)  # cosine similarity 0.0–1.0
+    audio_data = Column(LargeBinary, nullable=True)  # WAV bytes — primary persistent store
     created_at = Column(DateTime, default=datetime.utcnow)

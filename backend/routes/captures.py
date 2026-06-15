@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from .. import config, models
@@ -92,20 +92,19 @@ async def get_capture_endpoint(capture_id: str, db: Session = Depends(get_db)):
 
 @router.get("/captures/{capture_id}/audio")
 async def get_capture_audio_endpoint(capture_id: str, db: Session = Depends(get_db)):
-    """Stream the original capture audio file."""
+    """Stream the original capture audio — from file if present, else from DB bytes."""
     row = db.query(DBCapture).filter(DBCapture.id == capture_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Capture not found")
 
     audio_path = config.resolve_storage_path(row.audio_path)
-    if audio_path is None or not audio_path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found")
+    if audio_path and audio_path.exists():
+        return FileResponse(audio_path, media_type="audio/wav", filename=f"capture_{capture_id}.wav")
 
-    return FileResponse(
-        audio_path,
-        media_type="audio/wav",
-        filename=f"capture_{capture_id}.wav",
-    )
+    if row.audio_data:
+        return Response(content=row.audio_data, media_type="audio/wav")
+
+    raise HTTPException(status_code=404, detail="Audio file not found")
 
 
 @router.delete("/captures/{capture_id}")

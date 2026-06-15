@@ -33,9 +33,11 @@ def _rebuild_speaker_embedding(profile_id: str, db: Session) -> None:
     """Recompute the mean d-vector for a profile from all its current samples.
 
     Called (fire-and-forget in a thread) whenever samples are added or removed.
+    Uses DB audio_data bytes if the file on disk is missing.
     Failures are logged but never raised — speaker ID is best-effort.
     """
     import json as _j
+    import tempfile
     try:
         from ..adapters.speaker_id import build_mean_embedding
         profile = db.query(DBVoiceProfile).filter_by(id=profile_id).first()
@@ -43,11 +45,23 @@ def _rebuild_speaker_embedding(profile_id: str, db: Session) -> None:
             return
         samples = db.query(DBProfileSample).filter_by(profile_id=profile_id).all()
         audio_paths = []
+        temp_files = []
         for s in samples:
             resolved = config.resolve_storage_path(s.audio_path)
             if resolved and resolved.exists():
                 audio_paths.append(resolved)
-        emb = build_mean_embedding(audio_paths) if audio_paths else None
+            elif s.audio_data:
+                # File missing but bytes are in DB — write a temp file
+                tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                tmp.write(s.audio_data)
+                tmp.close()
+                audio_paths.append(Path(tmp.name))
+                temp_files.append(tmp.name)
+        try:
+            emb = build_mean_embedding(audio_paths) if audio_paths else None
+        finally:
+            for t in temp_files:
+                Path(t).unlink(missing_ok=True)
         profile.speaker_embedding = _j.dumps(emb) if emb is not None else None
         db.commit()
         if emb is not None:
@@ -284,11 +298,13 @@ async def add_profile_sample(
 
     dest_path = profile_dir / f"{sample_id}.wav"
     await asyncio.to_thread(save_audio, audio, str(dest_path), sr)
+    audio_bytes = dest_path.read_bytes()
 
     db_sample = DBProfileSample(
         id=sample_id,
         profile_id=profile_id,
         audio_path=config.to_storage_path(dest_path),
+        audio_data=audio_bytes,
         reference_text=reference_text,
     )
 

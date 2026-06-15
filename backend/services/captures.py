@@ -152,6 +152,7 @@ async def create_capture(
         row = DBCapture(
             id=capture_id,
             audio_path=config.to_storage_path(audio_path),
+            audio_data=audio_path.read_bytes(),
             source=source,
             language=language,
             duration_ms=duration_ms,
