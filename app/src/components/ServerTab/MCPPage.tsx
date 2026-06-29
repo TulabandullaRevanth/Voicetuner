@@ -11,10 +11,9 @@ import {
 } from '@/components/ui/select';
 import { useMCPBindings } from '@/lib/hooks/useMCPBindings';
 import { useProfiles } from '@/lib/hooks/useProfiles';
-import { useCaptureSettings } from '@/lib/hooks/useSettings';
 import { useServerStore } from '@/stores/serverStore';
 import { formatDate } from '@/lib/utils/format';
-import { SettingRow, SettingSection } from './SettingRow';
+import { SettingSection } from './SettingRow';
 
 function getStdioShimCommand(): string {
   if (typeof navigator === 'undefined') {
@@ -41,9 +40,7 @@ export function MCPPage() {
   const serverUrl = useServerStore((s) => s.serverUrl);
   const { bindings, upsertAsync, remove } = useMCPBindings();
   const { data: profiles } = useProfiles();
-  const { settings: captureSettings, update: updateCapture } = useCaptureSettings();
 
-  const defaultProfileId = captureSettings?.default_playback_voice_id ?? '';
   const mcpUrl = `${serverUrl}/mcp`;
   const stdioShimCommand = getStdioShimCommand();
 
@@ -112,40 +109,6 @@ export function MCPPage() {
               null,
               2,
             )}
-          />
-        </SettingSection>
-
-        <SettingSection
-          title={t('settings.mcp.defaultVoice.title')}
-          description={t('settings.mcp.defaultVoice.description')}
-        >
-          <SettingRow
-            title={t('settings.mcp.defaultVoice.label')}
-            description={t('settings.mcp.defaultVoice.labelHint')}
-            action={
-              <Select
-                value={defaultProfileId || '__default__'}
-                onValueChange={(v) =>
-                  updateCapture({
-                    default_playback_voice_id: v === '__default__' ? null : v,
-                  })
-                }
-              >
-                <SelectTrigger className="w-[220px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__default__">
-                    {t('settings.mcp.defaultVoice.none')}
-                  </SelectItem>
-                  {(profiles ?? []).map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            }
           />
         </SettingSection>
 

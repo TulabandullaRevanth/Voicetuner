@@ -203,14 +203,14 @@ export function HistoryTable() {
     return () => scrollEl.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const handlePlay = (audioId: string, text: string, profileId: string) => {
+  const handlePlay = (audioId: string, text: string, profileId: string, duration?: number) => {
     // If clicking the same audio, restart it from the beginning
     if (currentAudioId === audioId) {
       restartCurrentAudio();
     } else {
       // Otherwise, load the new audio and auto-play it
       const audioUrl = apiClient.getAudioUrl(audioId);
-      setAudioWithAutoPlay(audioUrl, audioId, profileId, text.substring(0, 50));
+      setAudioWithAutoPlay(audioUrl, audioId, profileId, text.substring(0, 50), duration);
     }
   };
 
@@ -505,7 +505,7 @@ export function HistoryTable() {
                       if (target.closest('textarea') || window.getSelection()?.toString()) {
                         return;
                       }
-                      handlePlay(gen.id, gen.text, gen.profile_id);
+                      handlePlay(gen.id, gen.text, gen.profile_id, gen.duration ?? undefined);
                     }}
                     onKeyDown={(e) => {
                       if (!isPlayable) return;
@@ -513,7 +513,7 @@ export function HistoryTable() {
                       if (target.closest('textarea') || target.closest('button')) return;
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        handlePlay(gen.id, gen.text, gen.profile_id);
+                        handlePlay(gen.id, gen.text, gen.profile_id, gen.duration ?? undefined);
                       }
                     }}
                   >
@@ -651,7 +651,7 @@ export function HistoryTable() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
-                              onClick={() => handlePlay(gen.id, gen.text, gen.profile_id)}
+                              onClick={() => handlePlay(gen.id, gen.text, gen.profile_id, gen.duration ?? undefined)}
                             >
                               <Play className="mr-2 h-4 w-4" />
                               {t('history.actions.play')}

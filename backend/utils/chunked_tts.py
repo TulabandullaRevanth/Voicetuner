@@ -11,9 +11,11 @@ overhead.
 
 import logging
 import re
-from typing import List, Tuple
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 import numpy as np
+import soundfile as sf
 
 logger = logging.getLogger("voicetuner.chunked-tts")
 
@@ -211,7 +213,8 @@ async def generate_chunked(
     max_chunk_chars: int = DEFAULT_MAX_CHUNK_CHARS,
     crossfade_ms: int = 50,
     trim_fn=None,
-) -> Tuple[np.ndarray, int]:
+    output_path: Optional[str] = None,
+) -> Tuple[Optional[np.ndarray], int]:
     """Generate audio with automatic chunking for long text.
 
     For text shorter than *max_chunk_chars* this is a thin wrapper around
@@ -220,7 +223,7 @@ async def generate_chunked(
     For longer text the input is split at natural sentence boundaries,
     each chunk is generated independently, optionally trimmed (useful for
     Chatterbox engines that hallucinate trailing noise), and the results
-    are concatenated with a crossfade (or hard cut if *crossfade_ms* is 0).
+    are written with crossfade stitching.
 
     Parameters
     ----------
@@ -239,10 +242,18 @@ async def generate_chunked(
         Optional ``(audio, sample_rate) -> audio`` post-processing
         function applied to each chunk before concatenation (e.g.
         ``trim_tts_output`` for Chatterbox engines).
+    output_path : str | None
+        When provided, chunks are streamed directly to this WAV file and
+        the function returns ``(None, sample_rate)``.  This keeps peak
+        memory constant regardless of output length — essential for
+        multi-hour generations.  When ``None``, all chunks are accumulated
+        in RAM and returned as a single ndarray (original behaviour,
+        suitable for short text).
 
     Returns
     -------
-    (audio, sample_rate) : Tuple[np.ndarray, int]
+    (audio, sample_rate) : Tuple[ndarray | None, int]
+        ``audio`` is ``None`` when *output_path* was provided.
     """
     chunks = split_text_into_chunks(text, max_chunk_chars)
 
@@ -257,7 +268,10 @@ async def generate_chunked(
         )
         if trim_fn is not None:
             audio = trim_fn(audio, sample_rate)
-        return audio, sample_rate
+        if output_path is not None:
+            _write_wav(np.asarray(audio, dtype=np.float32), sample_rate, output_path)
+            return None, sample_rate
+        return np.asarray(audio, dtype=np.float32), sample_rate
 
     # Long text — chunked generation
     logger.info(
@@ -266,28 +280,40 @@ async def generate_chunked(
         len(chunks),
         max_chunk_chars,
     )
+
+    if output_path is not None:
+        # Streaming path: write each chunk directly to disk; O(crossfade) RAM
+        sample_rate = await _stream_chunks_to_file(
+            backend=backend,
+            chunks=chunks,
+            voice_prompt=voice_prompt,
+            language=language,
+            seed=seed,
+            instruct=instruct,
+            trim_fn=trim_fn,
+            crossfade_ms=crossfade_ms,
+            output_path=output_path,
+        )
+        return None, sample_rate
+
+    # In-memory path (short-to-medium text, no output_path)
     audio_chunks: List[np.ndarray] = []
     sample_rate: int | None = None
 
     for i, chunk_text in enumerate(chunks):
-        logger.info(
-            "Generating chunk %d/%d (%d chars)",
-            i + 1,
-            len(chunks),
-            len(chunk_text),
-        )
-        # Vary the seed per chunk to avoid correlated RNG artefacts,
-        # but keep it deterministic so the same (text, seed) pair
-        # always produces the same output.
+        logger.info("Generating chunk %d/%d (%d chars)", i + 1, len(chunks), len(chunk_text))
         chunk_seed = (seed + i) if seed is not None else None
 
-        chunk_audio, chunk_sr = await backend.generate(
-            chunk_text,
-            voice_prompt,
-            language,
-            chunk_seed,
-            instruct,
-        )
+        try:
+            from time import perf_counter
+            _t0 = perf_counter()
+            chunk_audio, chunk_sr = await backend.generate(
+                chunk_text, voice_prompt, language, chunk_seed, instruct,
+            )
+            logger.info("Chunk %d generated in %.3fs (sr=%s)", i + 1, perf_counter() - _t0, chunk_sr)
+        except Exception as e:
+            logger.exception("Error generating chunk %d: %s", i + 1, e)
+            raise
         if trim_fn is not None:
             chunk_audio = trim_fn(chunk_audio, chunk_sr)
 
@@ -297,3 +323,113 @@ async def generate_chunked(
 
     audio = concatenate_audio_chunks(audio_chunks, sample_rate, crossfade_ms=crossfade_ms)
     return audio, sample_rate
+
+
+def _write_wav(audio: np.ndarray, sample_rate: int, path: str) -> None:
+    """Atomically write a float32 mono WAV file."""
+    tmp = path + ".tmp"
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    sf.write(tmp, audio, sample_rate, format="WAV")
+    Path(tmp).replace(path)
+
+
+async def _stream_chunks_to_file(
+    *,
+    backend,
+    chunks: List[str],
+    voice_prompt: dict,
+    language: str,
+    seed: int | None,
+    instruct: str | None,
+    trim_fn,
+    crossfade_ms: int,
+    output_path: str,
+) -> int:
+    """Generate chunks and stream them directly to *output_path* (WAV).
+
+    Keeps only a tiny crossfade tail in RAM — peak memory is O(crossfade)
+    regardless of how long the output is.
+
+    Returns the sample rate.
+    """
+    from time import perf_counter
+
+    sample_rate: int | None = None
+    crossfade_samples: int = 0
+    # Small tail buffer: last `crossfade_samples` of the previous written
+    # chunk, held back so we can blend them with the start of the next chunk.
+    tail: np.ndarray = np.array([], dtype=np.float32)
+    writer: Optional[sf.SoundFile] = None
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path + ".tmp"
+
+    try:
+        for i, chunk_text in enumerate(chunks):
+            logger.info("Generating chunk %d/%d (%d chars)", i + 1, len(chunks), len(chunk_text))
+            chunk_seed = (seed + i) if seed is not None else None
+
+            try:
+                _t0 = perf_counter()
+                chunk_audio, chunk_sr = await backend.generate(
+                    chunk_text, voice_prompt, language, chunk_seed, instruct,
+                )
+                logger.info("Chunk %d generated in %.3fs", i + 1, perf_counter() - _t0)
+            except Exception as e:
+                logger.exception("Error generating chunk %d: %s", i + 1, e)
+                raise
+
+            if trim_fn is not None:
+                chunk_audio = trim_fn(chunk_audio, chunk_sr)
+            chunk_audio = np.asarray(chunk_audio, dtype=np.float32)
+
+            if sample_rate is None:
+                sample_rate = chunk_sr
+                crossfade_samples = int(sample_rate * crossfade_ms / 1000)
+                writer = sf.SoundFile(
+                    tmp_path, mode="w", samplerate=sample_rate, channels=1, format="WAV",
+                    subtype="FLOAT",
+                )
+
+            if len(tail) == 0:
+                # First chunk: write all but the crossfade tail
+                if crossfade_samples > 0 and len(chunk_audio) > crossfade_samples:
+                    writer.write(chunk_audio[:-crossfade_samples])
+                    tail = chunk_audio[-crossfade_samples:].copy()
+                else:
+                    writer.write(chunk_audio)
+                    tail = np.array([], dtype=np.float32)
+            else:
+                # Blend tail of previous chunk with start of this chunk
+                overlap = min(crossfade_samples, len(tail), len(chunk_audio))
+                if overlap > 0:
+                    fade_out = np.linspace(1.0, 0.0, overlap, dtype=np.float32)
+                    fade_in = np.linspace(0.0, 1.0, overlap, dtype=np.float32)
+                    blended = tail[:overlap] * fade_out + chunk_audio[:overlap] * fade_in
+                    writer.write(blended)
+                    remaining = chunk_audio[overlap:]
+                else:
+                    # Chunks too short for crossfade — hard join
+                    writer.write(tail)
+                    remaining = chunk_audio
+
+                # Write middle of chunk, hold new tail
+                if crossfade_samples > 0 and len(remaining) > crossfade_samples:
+                    writer.write(remaining[:-crossfade_samples])
+                    tail = remaining[-crossfade_samples:].copy()
+                else:
+                    writer.write(remaining)
+                    tail = np.array([], dtype=np.float32)
+
+        # Flush final tail
+        if writer is not None and len(tail) > 0:
+            writer.write(tail)
+
+    finally:
+        if writer is not None:
+            writer.close()
+
+    # Atomic rename to final path
+    Path(tmp_path).replace(output_path)
+    logger.info("Streamed %d chunks to %s", len(chunks), output_path)
+    return sample_rate or 48000

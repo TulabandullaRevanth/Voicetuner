@@ -1,20 +1,17 @@
 """
-Speech provider router — decides which TTS/STT provider serves each language.
+Speech provider router — decides which TTS/STT provider serves each request.
 
 Policy (overridable via env TTS_PROVIDER / STT_PROVIDER = auto|local|sarvam|groq):
 
   TTS:
     - en  -> local-first (respect the requested engine; offline capable)
-    - hi  -> Sarvam (cloud) by default; local Kokoro/Chatterbox fallback if no key
-    - te  -> Sarvam ONLY (no local engine can synthesize Telugu)
     An explicit cloud engine request (sarvam/elevenlabs) is always honored.
 
   STT:
-    - en  -> local Whisper (offline-first)
-    - hi/te -> Sarvam Saarika if keyed, else Groq Whisper, else local Whisper
+    - en  -> local Whisper (offline-first); Groq if keyed and pref=groq
 
-When a language has no usable provider (e.g. Telugu with no Sarvam key),
-NoSpeechProviderError is raised; route handlers should surface it as HTTP 503.
+When no provider can serve the request, NoSpeechProviderError is raised;
+route handlers should surface it as HTTP 503.
 """
 
 from __future__ import annotations
@@ -54,7 +51,7 @@ def _stt_provider_pref() -> str:
 def _engine_supports(engine: str, lang: str) -> bool:
     """Whether a TTS engine can serve the given language."""
     if engine in _CLOUD_TTS_ENGINES:
-        return True  # cloud covers en/hi/te
+        return True  # cloud engines accept any language
     from ..backends import get_tts_model_configs
 
     for cfg in get_tts_model_configs():
@@ -97,26 +94,13 @@ def resolve_tts_engine(requested_engine: Optional[str], language: str) -> str:
     if pref == "local":
         if _engine_supports(requested, lang):
             return requested
-        # Local can't serve (e.g. Telugu) -> cloud is the only option.
+        # Local engine doesn't support the requested language -> try cloud.
         if get_sarvam_key():
             return "sarvam"
         raise NoSpeechProviderError(lang, "TTS")
 
-    # auto
-    if lang == "en":
-        return requested if _engine_supports(requested, "en") else "qwen"
-
-    # hi / te -> prefer Sarvam.
-    if get_sarvam_key():
-        return "sarvam"
-    # No Sarvam key: Hindi may fall back to a capable local engine; Telugu can't.
-    if _engine_supports(requested, lang):
-        return requested
-    fallback = _first_local_engine_supporting(lang)
-    if fallback:
-        logger.info("No Sarvam key; falling back to local '%s' for %s", fallback, lang)
-        return fallback
-    raise NoSpeechProviderError(lang, "TTS")
+    # auto — English-only: use requested engine if it supports en, else default to qwen.
+    return requested if _engine_supports(requested, "en") else "qwen"
 
 
 def get_stt_backend_for_language(language: Optional[str]):
@@ -133,12 +117,9 @@ def get_stt_backend_for_language(language: Optional[str]):
     if pref == "local":
         return get_stt_backend()
 
-    # auto: Indic languages prefer Sarvam, then Groq, then local Whisper.
-    if lang in ("hi", "te"):
-        if get_sarvam_key():
-            return _sarvam_stt()
-        if get_groq_key():
-            return _groq_stt()
+    # auto: prefer Groq for speed if keyed, otherwise local Whisper.
+    if get_groq_key():
+        return _groq_stt()
     return get_stt_backend()
 
 

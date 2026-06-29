@@ -162,7 +162,6 @@ async def delete_profile(
     return {"message": "Profile deleted successfully"}
 
 
-SAMPLE_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 SAMPLE_UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
@@ -179,15 +178,7 @@ async def add_profile_sample(
     file_suffix = _uploaded_ext if _uploaded_ext in _allowed_audio_exts else ".wav"
 
     with tempfile.NamedTemporaryFile(suffix=file_suffix, delete=False) as tmp:
-        total_size = 0
         while chunk := await file.read(SAMPLE_UPLOAD_CHUNK_SIZE):
-            total_size += len(chunk)
-            if total_size > SAMPLE_MAX_FILE_SIZE:
-                Path(tmp.name).unlink(missing_ok=True)
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large (max {SAMPLE_MAX_FILE_SIZE // (1024 * 1024)} MB)",
-                )
             tmp.write(chunk)
         tmp_path = tmp.name
 
@@ -385,6 +376,54 @@ async def update_profile_effects(
 # speaking. Rewrite now happens inside ``/generate`` (and ``/speak``)
 # when ``personality=true``; there is no standalone rewrite/respond/speak
 # endpoint.
+
+
+@router.post("/profiles/{profile_id}/warmup", status_code=202)
+async def warmup_profile_voice(
+    profile_id: str,
+    db: Session = Depends(get_db),
+):
+    """Pre-cache the voice prompt for a profile so the first generation is instant.
+
+    Runs ``create_voice_prompt_for_profile`` in the background for the profile's
+    default engine (falls back to ``qwen``).  Returns 202 immediately — the caller
+    should not block on the result.  Safe to call on every profile selection.
+    """
+    import asyncio
+
+    profile = db.query(DBVoiceProfile).filter_by(id=profile_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    voice_type = getattr(profile, "voice_type", None) or "cloned"
+    if voice_type not in ("cloned", "designed"):
+        # Preset/import voices don't need warm-up; nothing to cache.
+        return {"status": "skipped", "reason": "not a cloned profile"}
+
+    engine = (
+        getattr(profile, "default_engine", None)
+        or "qwen"
+    )
+
+    async def _warmup() -> None:
+        from ..backends import load_engine_model, get_tts_backend_for_engine
+        from ..database import get_db as _get_db
+
+        bg_db = next(_get_db())
+        try:
+            tts_model = get_tts_backend_for_engine(engine)
+            if not tts_model.is_loaded():
+                return  # Don't force-load the model just for warm-up
+            await profiles.create_voice_prompt_for_profile(
+                profile_id, bg_db, use_cache=True, engine=engine
+            )
+        except Exception:
+            pass  # Warm-up is best-effort; never surface errors to the caller
+        finally:
+            bg_db.close()
+
+    asyncio.ensure_future(_warmup())
+    return {"status": "warming_up", "engine": engine}
 
 
 @router.post(

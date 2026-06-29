@@ -41,11 +41,13 @@ async def _generation_worker():
     while True:
         job = await _generation_queue.get()
         try:
+            import logging
+            logging.getLogger(__name__).info("Generation worker: picked job %s", job.generation_id)
             if job.generation_id in _cancelled_generation_ids:
                 _cancelled_generation_ids.discard(job.generation_id)
                 job.coro.close()
                 continue
-
+            logging.getLogger(__name__).info("Generation worker: starting task %s", job.generation_id)
             task = asyncio.create_task(job.coro)
             _running_generation_tasks[job.generation_id] = task
             _queued_generation_ids.discard(job.generation_id)

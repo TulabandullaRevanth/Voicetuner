@@ -32,19 +32,11 @@ import type {
   StoryItemVersionUpdate,
   StoryItemVolumeUpdate,
   StoryResponse,
+  TranscriptionJobStatus,
   TranscriptionResponse,
   VoiceProfileCreate,
   VoiceProfileResponse,
   WhisperModelSize,
-  CaptureListResponse,
-  CaptureResponse,
-  CaptureCreateResponse,
-  CaptureReadinessResponse,
-  CaptureRefineRequest,
-  CaptureRetranscribeRequest,
-  CaptureSettings,
-  CaptureSettingsUpdate,
-  CaptureSource,
   GenerationSettings,
   GenerationSettingsUpdate,
   MCPClientBinding,
@@ -140,6 +132,14 @@ class ApiClient {
     return this.request<PersonalityTextResponse>(`/profiles/${profileId}/compose`, {
       method: 'POST',
     });
+  }
+
+  async warmupProfile(profileId: string): Promise<void> {
+    try {
+      await this.request<unknown>(`/profiles/${profileId}/warmup`, { method: 'POST' });
+    } catch {
+      // Best-effort: never surface warm-up errors to the caller
+    }
   }
 
   async addProfileSample(
@@ -422,88 +422,40 @@ class ApiClient {
     return response.json();
   }
 
-  // Captures
-  async listCaptures(limit = 50, offset = 0): Promise<CaptureListResponse> {
-    return this.request<CaptureListResponse>(
-      `/captures?limit=${limit}&offset=${offset}`,
-    );
-  }
-
-  async getCapture(captureId: string): Promise<CaptureResponse> {
-    return this.request<CaptureResponse>(`/captures/${captureId}`);
-  }
-
-  async createCapture(
+  /**
+   * Start a background, chunked transcription for a long audio file.
+   * Returns a job id to poll with {@link getTranscriptionJob}. Use this instead
+   * of {@link transcribeAudio} for multi-hour uploads.
+   */
+  async startTranscriptionJob(
     file: File,
-    options?: {
-      source?: CaptureSource;
-      language?: LanguageCode;
-      sttModel?: WhisperModelSize;
-    },
-  ): Promise<CaptureCreateResponse> {
+    language?: LanguageCode,
+    model?: WhisperModelSize,
+  ): Promise<{ job_id: string; status: string }> {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('source', options?.source ?? 'file');
-    if (options?.language) formData.append('language', options.language);
-    if (options?.sttModel) formData.append('stt_model', options.sttModel);
+    if (language) {
+      formData.append('language', language);
+    }
+    if (model) {
+      formData.append('model', model);
+    }
 
-    const url = `${this.getBaseUrl()}/captures`;
+    const url = `${this.getBaseUrl()}/transcribe/jobs`;
     const response = await fetch(url, { method: 'POST', body: formData });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({
-        detail: response.statusText,
-      }));
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
       throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
     }
     return response.json();
   }
 
-  async deleteCapture(captureId: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/captures/${captureId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async refineCapture(
-    captureId: string,
-    body: CaptureRefineRequest,
-  ): Promise<CaptureResponse> {
-    return this.request<CaptureResponse>(`/captures/${captureId}/refine`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-  }
-
-  async retranscribeCapture(
-    captureId: string,
-    body: CaptureRetranscribeRequest,
-  ): Promise<CaptureResponse> {
-    return this.request<CaptureResponse>(`/captures/${captureId}/retranscribe`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-  }
-
-  getCaptureAudioUrl(captureId: string): string {
-    return `${this.getBaseUrl()}/captures/${captureId}/audio`;
+  /** Poll a background transcription job's status/progress/result. */
+  async getTranscriptionJob(jobId: string): Promise<TranscriptionJobStatus> {
+    return this.request<TranscriptionJobStatus>(`/transcribe/jobs/${jobId}`);
   }
 
   // Settings
-  async getCaptureSettings(): Promise<CaptureSettings> {
-    return this.request<CaptureSettings>('/settings/captures');
-  }
-
-  async getCaptureReadiness(): Promise<CaptureReadinessResponse> {
-    return this.request<CaptureReadinessResponse>('/capture/readiness');
-  }
-
-  async updateCaptureSettings(patch: CaptureSettingsUpdate): Promise<CaptureSettings> {
-    return this.request<CaptureSettings>('/settings/captures', {
-      method: 'PUT',
-      body: JSON.stringify(patch),
-    });
-  }
-
   async getGenerationSettings(): Promise<GenerationSettings> {
     return this.request<GenerationSettings>('/settings/generation');
   }

@@ -9,6 +9,9 @@
     "landing"
   ],
   "scripts": {
+    "start": "./scripts/run-local.sh",
+    "stop": "./scripts/stop-local.sh",
+    "backup": "./scripts/backup-db.sh",
     "dev": "bun run setup:dev && cd tauri && bun run tauri dev",
     "dev:web": "cd web && bun run dev",
     "dev:landing": "cd landing && bun run dev",
@@ -35,6 +38,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.3.12",
     "@types/node": "^20.0.0",
+    "playwright-core": "^1.61.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.6.0"
   },

@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { apiClient } from '@/lib/api/client';
 import type { VoiceProfileResponse } from '@/lib/api/types';
 import { useDeleteProfile, useExportProfile } from '@/lib/hooks/useProfiles';
 import { cn } from '@/lib/utils/cn';
@@ -48,7 +49,12 @@ export function ProfileCard({ profile, disabled }: ProfileCardProps) {
       setTimeout(() => setSelectedProfileId(profile.id), 0);
       return;
     }
-    setSelectedProfileId(isSelected ? null : profile.id);
+    const nowSelected = !isSelected;
+    setSelectedProfileId(nowSelected ? profile.id : null);
+    if (nowSelected) {
+      // Pre-cache the voice prompt so the first generation uses the profile's exact voice instantly
+      apiClient.warmupProfile(profile.id);
+    }
   };
 
   const handleEdit = () => {

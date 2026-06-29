@@ -8,6 +8,7 @@ interface PlayerState {
   isPlaying: boolean;
   currentTime: number;
   duration: number;
+  durationHint: number;
   volume: number;
   isLooping: boolean;
   shouldRestart: boolean;
@@ -15,7 +16,7 @@ interface PlayerState {
   onFinish: (() => void) | null;
 
   setAudio: (url: string, id: string, profileId: string | null, title?: string) => void;
-  setAudioWithAutoPlay: (url: string, id: string, profileId: string | null, title?: string) => void;
+  setAudioWithAutoPlay: (url: string, id: string, profileId: string | null, title?: string, durationHint?: number) => void;
   setIsPlaying: (playing: boolean) => void;
   setCurrentTime: (time: number) => void;
   setDuration: (duration: number) => void;
@@ -36,6 +37,7 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   isPlaying: false,
   currentTime: 0,
   duration: 0,
+  durationHint: 0,
   volume: 1,
   isLooping: false,
   shouldRestart: false,
@@ -52,8 +54,9 @@ export const usePlayerStore = create<PlayerState>((set) => ({
       isPlaying: false,
       shouldRestart: false,
       shouldAutoPlay: false,
+      durationHint: 0,
     }),
-  setAudioWithAutoPlay: (url, id, profileId, title) =>
+  setAudioWithAutoPlay: (url, id, profileId, title, durationHint = 0) =>
     set({
       audioUrl: url,
       audioId: id,
@@ -63,6 +66,7 @@ export const usePlayerStore = create<PlayerState>((set) => ({
       isPlaying: false,
       shouldRestart: false,
       shouldAutoPlay: true,
+      durationHint: durationHint || 0,
     }),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   setCurrentTime: (time) => set({ currentTime: time }),
@@ -82,6 +86,7 @@ export const usePlayerStore = create<PlayerState>((set) => ({
       isPlaying: false,
       currentTime: 0,
       duration: 0,
+      durationHint: 0,
       isLooping: false,
       shouldRestart: false,
       shouldAutoPlay: false,

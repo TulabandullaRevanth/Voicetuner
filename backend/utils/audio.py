@@ -44,24 +44,120 @@ def normalize_audio(
     return audio
 
 
+def normalize_audio_file(
+    path: str,
+    target_db: float = -20.0,
+    peak_limit: float = 0.85,
+    block_frames: int = 48000 * 10,  # 10-second blocks
+) -> None:
+    """Normalize a WAV file in-place using two streaming passes.
+
+    Avoids loading the whole file into RAM — safe for multi-hour audio.
+    Pass 1: compute RMS and peak across all blocks.
+    Pass 2: apply gain + peak clamp and write to a temp file, then replace.
+    """
+    import os
+
+    # Pass 1: scan RMS and peak
+    sum_sq = 0.0
+    total_frames = 0
+    peak = 0.0
+    with sf.SoundFile(path, "r") as f:
+        for block in f.blocks(blocksize=block_frames, dtype="float32"):
+            sum_sq += float(np.sum(block.astype(np.float64) ** 2))
+            total_frames += len(block)
+            block_peak = float(np.abs(block).max())
+            if block_peak > peak:
+                peak = block_peak
+
+    if total_frames == 0:
+        return
+
+    rms = np.sqrt(sum_sq / total_frames)
+    target_rms = 10 ** (target_db / 20)
+    gain = (target_rms / rms) if rms > 0 else 1.0
+
+    # Cap gain so peak stays within limit after amplification
+    if peak * gain > peak_limit:
+        gain = peak_limit / peak if peak > 0 else gain
+
+    if abs(gain - 1.0) < 1e-4:
+        return  # Essentially unchanged, skip the write pass
+
+    # Pass 2: apply gain and write to temp file
+    tmp = path + ".norm.tmp"
+    try:
+        with sf.SoundFile(path, "r") as src, \
+             sf.SoundFile(tmp, "w", samplerate=src.samplerate,
+                          channels=src.channels, format="WAV", subtype="FLOAT") as dst:
+            for block in src.blocks(blocksize=block_frames, dtype="float32"):
+                block = np.clip(block * gain, -peak_limit, peak_limit)
+                dst.write(block)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+
+
 def load_audio(
     path: str,
     sample_rate: int = 24000,
     mono: bool = True,
+    offset: float = 0.0,
+    duration: Optional[float] = None,
 ) -> Tuple[np.ndarray, int]:
     """
     Load audio file with normalization.
-    
+
     Args:
         path: Path to audio file
         sample_rate: Target sample rate
         mono: Convert to mono
-        
+        offset: Start reading this many seconds into the file
+        duration: Only load this many seconds (None = until the end).
+            Lets callers bound memory when reading a slice of a long file.
+
     Returns:
         Tuple of (audio_array, sample_rate)
     """
-    audio, sr = librosa.load(path, sr=sample_rate, mono=mono)
+    audio, sr = librosa.load(
+        path, sr=sample_rate, mono=mono, offset=offset, duration=duration
+    )
     return audio, sr
+
+
+def get_audio_duration(path: str) -> float:
+    """Return an audio file's duration in seconds without loading the samples."""
+    return float(librosa.get_duration(path=path))
+
+
+def _pick_loudest_window(
+    audio: np.ndarray, sr: int, window_seconds: float
+) -> np.ndarray:
+    """
+    Return the contiguous ``window_seconds`` slice of ``audio`` with the
+    highest RMS energy. Used to pick a representative voice-cloning reference
+    from a longer recording instead of blindly taking the first N seconds
+    (which may be silence or noise).
+    """
+    window = int(window_seconds * sr)
+    if window <= 0 or len(audio) <= window:
+        return audio
+
+    hop = max(1, int(0.5 * sr))  # scan in 0.5s steps
+    best_start = 0
+    best_energy = -1.0
+    for start in range(0, len(audio) - window + 1, hop):
+        seg = audio[start : start + window]
+        energy = float(np.mean(seg.astype(np.float64) ** 2))
+        if energy > best_energy:
+            best_energy = energy
+            best_start = start
+    return audio[best_start : best_start + window]
 
 
 def save_audio(
@@ -296,18 +392,37 @@ def validate_and_load_reference_audio(
     slightly-hot recordings aren't rejected as clipping. Duration and RMS
     checks run on the preprocessed waveform.
 
+    Long uploads (e.g. a multi-hour recording) are *not* rejected — only a
+    short, representative segment is needed to clone a voice. When the file is
+    longer than ``max_duration`` we read just a bounded probe window from the
+    start of the file (so memory stays small even for hours-long audio) and
+    keep the loudest ``max_duration`` slice of it as the reference.
+
     Returns:
         Tuple of (is_valid, error_message, audio_array, sample_rate)
     """
     try:
-        audio, sr = load_audio(audio_path)
-        audio = preprocess_reference_audio(audio, sr)
+        # Cheaply check the full duration without decoding the whole file.
+        try:
+            total_duration = get_audio_duration(audio_path)
+        except Exception:
+            total_duration = None
+
+        if total_duration is not None and total_duration > max_duration:
+            # Read only a bounded probe window instead of the full file, so a
+            # 5-hour upload doesn't pull gigabytes of samples into memory.
+            probe_seconds = min(total_duration, max(max_duration * 3.0, 90.0))
+            audio, sr = load_audio(audio_path, duration=probe_seconds)
+            audio = preprocess_reference_audio(audio, sr)
+            audio = _pick_loudest_window(audio, sr, max_duration)
+        else:
+            audio, sr = load_audio(audio_path)
+            audio = preprocess_reference_audio(audio, sr)
+
         duration = len(audio) / sr
 
         if duration < min_duration:
             return False, f"Audio too short (minimum {min_duration} seconds)", None, None
-        if duration > max_duration:
-            return False, f"Audio too long (maximum {max_duration} seconds)", None, None
 
         rms = np.sqrt(np.mean(audio**2))
         if rms < min_rms:

@@ -32,6 +32,7 @@ export function VoicesTab() {
   const setDialogOpen = useUIStore((state) => state.setProfileDialogOpen);
   const selectedVoiceId = useUIStore((state) => state.selectedVoiceId);
   const setSelectedVoiceId = useUIStore((state) => state.setSelectedVoiceId);
+  const setSelectedProfileId = useUIStore((state) => state.setSelectedProfileId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioUrl = usePlayerStore((state) => state.audioUrl);
   const isPlayerVisible = !!audioUrl;
@@ -53,12 +54,15 @@ export function VoicesTab() {
   useEffect(() => {
     if (!selectedVoiceId && profiles && profiles.length > 0) {
       setSelectedVoiceId(profiles[0].id);
+      setSelectedProfileId(profiles[0].id);
     }
     // Clear selection if selected profile was deleted
     if (selectedVoiceId && profiles && !profiles.find((p) => p.id === selectedVoiceId)) {
-      setSelectedVoiceId(profiles.length > 0 ? profiles[0].id : null);
+      const fallback = profiles.length > 0 ? profiles[0].id : null;
+      setSelectedVoiceId(fallback);
+      setSelectedProfileId(fallback);
     }
-  }, [profiles, selectedVoiceId, setSelectedVoiceId]);
+  }, [profiles, selectedVoiceId, setSelectedVoiceId, setSelectedProfileId]);
 
   // Get channel assignments for each profile
   const { data: channelAssignments } = useQuery({
@@ -156,7 +160,10 @@ export function VoicesTab() {
                   key={profile.id}
                   profile={profile}
                   isSelected={selectedVoiceId === profile.id}
-                  onSelect={() => setSelectedVoiceId(profile.id)}
+                  onSelect={() => {
+                    setSelectedVoiceId(profile.id);
+                    setSelectedProfileId(profile.id);
+                  }}
                   channelIds={channelAssignments?.[profile.id] || []}
                   channels={channels || []}
                   onChannelChange={(channelIds) => handleChannelChange(profile.id, channelIds)}

@@ -53,9 +53,9 @@ services:
     container_name: voicetuner
     restart: unless-stopped
 
-    # Only exposed internally; nginx is the public entry point.
-    expose:
-      - "17493"
+    # Expose backend directly to host for HTTP access (in addition to nginx reverse proxy)
+    ports:
+      - "8000:17493"
 
     environment:
       - LOG_LEVEL=info

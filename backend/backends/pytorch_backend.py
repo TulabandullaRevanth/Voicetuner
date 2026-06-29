@@ -10,6 +10,11 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Max codec tokens to generate per chunk. Matches the value in the Qwen3-TTS
+# model's own generation_config.json (~100s of audio); the inference wrapper
+# otherwise defaults to 2048 (~25s), which truncates long chunks.
+QWEN_TTS_MAX_NEW_TOKENS = 8192
+
 from . import TTSBackend, STTBackend, LANGUAGE_CODE_TO_NAME, WHISPER_HF_REPOS
 from .base import (
     is_model_cached,
@@ -231,11 +236,20 @@ class PyTorchTTSBackend:
 
             # See _create_prompt_sync comment — inference runs with the
             # process's default HF_HUB_OFFLINE state (issue #462).
+            #
+            # max_new_tokens: the qwen_tts inference wrapper defaults to a
+            # conservative 2048 codec tokens (~25s of audio), which silently
+            # truncates longer chunks — a long script would come out roughly
+            # half-length. Use the value from the model's own
+            # generation_config (8192, ~100s) so a full ~800-char chunk
+            # renders completely; output still stays within the model's 8000
+            # context window for our chunk sizes.
             wavs, sample_rate = self.model.generate_voice_clone(
                 text=text,
                 voice_clone_prompt=voice_prompt,
                 language=LANGUAGE_CODE_TO_NAME.get(language, "auto"),
                 instruct=instruct,
+                max_new_tokens=QWEN_TTS_MAX_NEW_TOKENS,
             )
             return wavs[0], sample_rate
 

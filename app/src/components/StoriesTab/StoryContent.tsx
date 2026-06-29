@@ -366,7 +366,12 @@ export function StoryContent() {
         <div>
           <h2 className="text-2xl font-bold">{story.name}</h2>
           {story.description && (
-            <p className="text-sm text-muted-foreground mt-1">{story.description}</p>
+            <p
+              className="text-sm text-muted-foreground mt-1 line-clamp-2 max-w-2xl break-words"
+              title={story.description}
+            >
+              {story.description}
+            </p>
           )}
         </div>
         <div className="flex gap-2 items-center">

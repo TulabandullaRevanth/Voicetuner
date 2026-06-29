@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMatchRoute } from '@tanstack/react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Dices, Loader2, SlidersHorizontal, Sparkles, Wand2 } from 'lucide-react';
+import { Dices, FileText, Loader2, Mic2, SlidersHorizontal, Sparkles, Wand2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -16,15 +16,15 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { apiClient } from '@/lib/api/client';
-import { getLanguageOptionsForEngine, type LanguageCode } from '@/lib/constants/languages';
+import type { LanguageCode } from '@/lib/constants/languages';
 import { useGenerationForm } from '@/lib/hooks/useGenerationForm';
 import { useProfile, useProfiles } from '@/lib/hooks/useProfiles';
 import { useStory } from '@/lib/hooks/useStories';
 import { cn } from '@/lib/utils/cn';
 import { useGenerationStore } from '@/stores/generationStore';
+import { useServerStore } from '@/stores/serverStore';
 import { useStoryStore } from '@/stores/storyStore';
 import { useUIStore } from '@/stores/uiStore';
-import { EngineModelSelector } from './EngineModelSelector';
 import { ParalinguisticInput } from './ParalinguisticInput';
 
 interface FloatingGenerateBoxProps {
@@ -44,9 +44,9 @@ export function FloatingGenerateBox({
   const { data: profiles } = useProfiles();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isInstructExpanded, setIsInstructExpanded] = useState(false);
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const textFileInputRef = useRef<HTMLInputElement>(null);
   const matchRoute = useMatchRoute();
   const isStoriesRoute = matchRoute({ to: '/stories' });
   const selectedStoryId = useStoryStore((state) => state.selectedStoryId);
@@ -54,6 +54,19 @@ export function FloatingGenerateBox({
   const { data: currentStory } = useStory(selectedStoryId);
   const addPendingStoryAdd = useGenerationStore((s) => s.addPendingStoryAdd);
   const { toast } = useToast();
+  const serverUrl = useServerStore((state) => state.serverUrl);
+
+  // Fetch stub voices (only available when offline stub is running)
+  const { data: stubVoices } = useQuery({
+    queryKey: ['stubVoices', serverUrl],
+    queryFn: async () => {
+      const res = await fetch(`${serverUrl}/stub/voices`);
+      if (!res.ok) return null;
+      return res.json() as Promise<Array<{ name: string; lang: string; lang_prefix: string; gender: string }>>;
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
 
   const composeMutation = useMutation({
     mutationFn: async () => {
@@ -69,12 +82,6 @@ export function FloatingGenerateBox({
     },
   });
 
-  // Fetch effect presets for the dropdown
-  const { data: effectPresets } = useQuery({
-    queryKey: ['effectPresets'],
-    queryFn: () => apiClient.listEffectPresets(),
-  });
-
   // Calculate if track editor is visible (on stories route with items)
   const hasTrackEditor = isStoriesRoute && currentStory && currentStory.items.length > 0;
 
@@ -85,16 +92,6 @@ export function FloatingGenerateBox({
       if (isStoriesRoute && selectedStoryId && generationId) {
         addPendingStoryAdd(generationId, selectedStoryId);
       }
-    },
-    getEffectsChain: () => {
-      if (!selectedPresetId) return undefined;
-      // Profile's own effects chain (no matching preset)
-      if (selectedPresetId === '_profile') {
-        return selectedProfile?.effects_chain ?? undefined;
-      }
-      if (!effectPresets) return undefined;
-      const preset = effectPresets.find((p) => p.id === selectedPresetId);
-      return preset?.effects_chain;
     },
   });
 
@@ -128,10 +125,12 @@ export function FloatingGenerateBox({
     };
   }, [isExpanded]);
 
-  // Set first voice as default if none selected
+  // Set first voice as default if none selected; warm up its voice prompt
   useEffect(() => {
     if (!selectedProfileId && profiles && profiles.length > 0) {
-      setSelectedProfileId(profiles[0].id);
+      const firstId = profiles[0].id;
+      setSelectedProfileId(firstId);
+      apiClient.warmupProfile(firstId);
     }
   }, [selectedProfileId, profiles, setSelectedProfileId]);
 
@@ -161,41 +160,18 @@ export function FloatingGenerateBox({
     if (engine) {
       form.setValue('engine', engine as EngineValue);
     } else if (selectedProfile && selectedProfile.voice_type !== 'preset') {
-      // Cloned/designed profile with no default — ensure a compatible (non-preset) engine
+      // Cloned/designed profile with no default — ensure a compatible engine
       const currentEngine = form.getValues('engine');
-      const presetEngines = new Set(['kokoro', 'qwen_custom_voice']);
-      if (currentEngine && presetEngines.has(currentEngine)) {
+      const incompatibleWithCloned = new Set(['kokoro', 'qwen_custom_voice', 'sarvam']);
+      if (currentEngine && incompatibleWithCloned.has(currentEngine)) {
         form.setValue('engine', 'qwen');
       }
-    }
-    // Pre-fill effects from profile defaults
-    if (
-      selectedProfile?.effects_chain &&
-      selectedProfile.effects_chain.length > 0 &&
-      effectPresets
-    ) {
-      // Try to match against a known preset
-      const profileChainJson = JSON.stringify(selectedProfile.effects_chain);
-      const matchingPreset = effectPresets.find(
-        (p) => JSON.stringify(p.effects_chain) === profileChainJson,
-      );
-      if (matchingPreset) {
-        setSelectedPresetId(matchingPreset.id);
-      } else {
-        // No matching preset — use special value to pass profile chain directly
-        setSelectedPresetId('_profile');
-      }
-    } else if (
-      selectedProfile &&
-      (!selectedProfile.effects_chain || selectedProfile.effects_chain.length === 0)
-    ) {
-      setSelectedPresetId(null);
     }
     // Persona toggle only applies when the profile has a personality prompt.
     if (selectedProfile && !selectedProfile.personality?.trim()) {
       form.setValue('personality', false);
     }
-  }, [selectedProfile, effectPresets, form]);
+  }, [selectedProfile, form]);
 
   // Auto-resize textarea based on content (only when expanded)
   useEffect(() => {
@@ -247,6 +223,19 @@ export function FloatingGenerateBox({
     };
   }, [isExpanded]);
 
+  function handleTextFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      form.setValue('text', text, { shouldValidate: true });
+      setIsExpanded(true);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }
+
   async function onSubmit(data: Parameters<typeof handleSubmit>[0]) {
     await handleSubmit(data, selectedProfileId);
   }
@@ -277,6 +266,13 @@ export function FloatingGenerateBox({
       >
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
+            <input
+              ref={textFileInputRef}
+              type="file"
+              accept=".txt,text/plain"
+              onChange={handleTextFileUpload}
+              className="hidden"
+            />
             <div className="flex gap-2">
               <motion.div className="flex-1" transition={{ duration: 0.3, ease: 'easeOut' }}>
                 <FormField
@@ -476,6 +472,23 @@ export function FloatingGenerateBox({
 
                 <div className="group relative">
                   <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => textFileInputRef.current?.click()}
+                    disabled={!selectedProfileId}
+                    className="h-10 w-10 rounded-full bg-card border border-border hover:bg-background/50 transition-all duration-200"
+                    aria-label="Upload text file"
+                  >
+                    <FileText className="h-4 w-4" />
+                  </Button>
+                  <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 whitespace-nowrap rounded-md bg-popover px-3 py-1.5 text-xs text-popover-foreground border border-border opacity-0 transition-opacity group-hover:opacity-100 z-[9999]">
+                    Upload .txt file
+                  </span>
+                </div>
+
+                <div className="group relative">
+                  <Button
                     type="submit"
                     disabled={isPending || !selectedProfileId}
                     className="h-10 w-10 rounded-full bg-accent hover:bg-accent/90 hover:scale-105 text-accent-foreground shadow-lg hover:shadow-accent/50 transition-all duration-200"
@@ -545,12 +558,119 @@ export function FloatingGenerateBox({
                 transition={{ duration: 0.3, ease: 'easeOut' }}
                 className=" mt-3"
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Engine selector */}
+                  <FormField
+                    control={form.control}
+                    name="engine"
+                    render={({ field }) => {
+                      const isPreset = selectedProfile?.voice_type === 'preset';
+                      const cloneEngines = [
+                        { value: 'qwen', label: 'Qwen TTS' },
+                        { value: 'luxtts', label: 'LuxTTS' },
+                        { value: 'f5tts', label: 'F5-TTS' },
+                        { value: 'chatterbox', label: 'Chatterbox' },
+                        { value: 'chatterbox_turbo', label: 'Chatterbox Turbo' },
+                        { value: 'tada', label: 'TADA' },
+                      ];
+                      const presetEngines = [
+                        { value: 'kokoro', label: 'Kokoro' },
+                        { value: 'qwen_custom_voice', label: 'CustomVoice' },
+                      ];
+                      const engines = isPreset ? presetEngines : cloneEngines;
+                      return (
+                        <FormItem className="space-y-0">
+                          <Select
+                            onValueChange={field.onChange}
+                            value={field.value || 'qwen'}
+                            disabled={isPreset}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="h-8 text-xs bg-card border-border rounded-full hover:bg-background/50 transition-all min-w-[120px]">
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {engines.map((e) => (
+                                <SelectItem key={e.value} value={e.value} className="text-xs">
+                                  {e.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      );
+                    }}
+                  />
+
+                  {/* Stub voice picker — only shown when offline stub is active */}
+                  {stubVoices && stubVoices.length > 0 && (
+                    <FormField
+                      control={form.control}
+                      name="stub_voice"
+                      render={({ field }) => (
+                        <FormItem className="flex-1 space-y-0 min-w-[130px]">
+                          <Select
+                            onValueChange={(val) => field.onChange(val === '__none__' ? undefined : val)}
+                            value={field.value ?? '__none__'}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="h-8 text-xs bg-card border-border rounded-full hover:bg-background/50 transition-all">
+                                <Mic2 className="h-3 w-3 mr-1 shrink-0 text-muted-foreground" />
+                                <SelectValue placeholder="Voice" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent className="max-h-64">
+                              <SelectItem value="__none__" className="text-xs text-muted-foreground italic">
+                                None (use profile voice)
+                              </SelectItem>
+                              {(['female', 'male'] as const).map((gender) => {
+                                const group = stubVoices.filter(
+                                  (v) => v.gender === gender && v.lang_prefix === 'en',
+                                );
+                                if (!group.length) return null;
+                                return (
+                                  <div key={gender}>
+                                    <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                                      {gender === 'female' ? '♀ Female' : '♂ Male'}
+                                    </div>
+                                    {group.map((v) => (
+                                      <SelectItem key={v.name} value={v.name} className="text-xs">
+                                        {v.name.replace(/ \(English \(US\)\)/, '')}
+                                      </SelectItem>
+                                    ))}
+                                  </div>
+                                );
+                              })}
+                              {stubVoices.filter((v) => v.lang_prefix !== 'en').length > 0 && (
+                                <div>
+                                  <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                                    Other Languages
+                                  </div>
+                                  {stubVoices
+                                    .filter((v) => v.lang_prefix !== 'en')
+                                    .map((v) => (
+                                      <SelectItem key={v.name} value={v.name} className="text-xs">
+                                        {v.name} ({v.lang})
+                                      </SelectItem>
+                                    ))}
+                                </div>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
                   {showVoiceSelector && (
                     <div className="flex-1">
                       <Select
                         value={selectedProfileId || ''}
-                        onValueChange={(value) => setSelectedProfileId(value || null)}
+                        onValueChange={(value) => {
+                          setSelectedProfileId(value || null);
+                          if (value) apiClient.warmupProfile(value);
+                        }}
                       >
                         <SelectTrigger className="h-8 text-xs bg-card border-border rounded-full hover:bg-background/50 transition-all w-full">
                           <SelectValue placeholder={t('generation.voiceSelector.placeholder')} />
@@ -567,67 +687,7 @@ export function FloatingGenerateBox({
                   )}
 
 
-                  <FormField
-                    control={form.control}
-                    name="language"
-                    render={({ field }) => {
-                      const engineLangs = getLanguageOptionsForEngine(
-                        form.watch('engine') || 'qwen',
-                      );
-                      return (
-                        <FormItem className="flex-1 space-y-0">
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger className="h-8 text-xs bg-card border-border rounded-full hover:bg-background/50 transition-all">
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {engineLangs.map((lang) => (
-                                <SelectItem key={lang.value} value={lang.value} className="text-xs">
-                                  {lang.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage className="text-xs" />
-                        </FormItem>
-                      );
-                    }}
-                  />
 
-                  <FormItem className="flex-1 space-y-0">
-                    <EngineModelSelector form={form} compact />
-                  </FormItem>
-
-                  <FormItem className="flex-1 space-y-0">
-                    <Select
-                      value={selectedPresetId || 'none'}
-                      onValueChange={(value) =>
-                        setSelectedPresetId(value === 'none' ? null : value)
-                      }
-                    >
-                      <SelectTrigger className="h-8 text-xs bg-card border-border rounded-full hover:bg-background/50 transition-all">
-                        <SelectValue placeholder={t('generation.effects.none')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none" className="text-xs">
-                          {t('generation.effects.none')}
-                        </SelectItem>
-                        {selectedProfile?.effects_chain &&
-                          selectedProfile.effects_chain.length > 0 && (
-                            <SelectItem value="_profile" className="text-xs">
-                              {t('generation.effects.profileDefault')}
-                            </SelectItem>
-                          )}
-                        {effectPresets?.map((preset) => (
-                          <SelectItem key={preset.id} value={preset.id} className="text-xs">
-                            {preset.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FormItem>
                 </div>
               </motion.div>
             </AnimatePresence>

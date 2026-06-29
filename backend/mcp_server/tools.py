@@ -18,7 +18,6 @@ from fastmcp import FastMCP
 
 from .. import models
 from ..database import get_db
-from ..services import captures as captures_service
 from ..services import profiles as profiles_service
 from . import events as mcp_events
 from .context import current_client_id, request_is_loopback
@@ -161,34 +160,6 @@ def register_tools(mcp: FastMCP) -> None:
             return await _transcribe_file(tmp_path, language, model)
         finally:
             tmp_path.unlink(missing_ok=True)
-
-    @mcp.tool(
-        name="voicetuner.list_captures",
-        description=(
-            "List recent voice captures (dictations, recordings, uploads) "
-            "with their transcripts. Most-recent first."
-        ),
-    )
-    async def voicetuner_list_captures(
-        limit: int = 20, offset: int = 0
-    ) -> dict[str, Any]:
-        if not (1 <= limit <= 200):
-            raise ValueError("`limit` must be between 1 and 200.")
-        if offset < 0:
-            raise ValueError("`offset` must be >= 0.")
-        db = next(get_db())
-        try:
-            items, total = captures_service.list_captures(
-                db, limit=limit, offset=offset
-            )
-            return {
-                "captures": [
-                    item.model_dump(mode="json") for item in items
-                ],
-                "total": total,
-            }
-        finally:
-            db.close()
 
     @mcp.tool(
         name="voicetuner.list_profiles",

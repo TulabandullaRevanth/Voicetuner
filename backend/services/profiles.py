@@ -82,7 +82,7 @@ def get_profiles_with_embeddings(db: Session) -> list[tuple[str, str, str]]:
     ).filter(DBVoiceProfile.speaker_embedding.isnot(None)).all()
     return [(r.id, r.name, r.speaker_embedding) for r in rows]
 
-CLONING_ENGINES = {"qwen", "luxtts", "chatterbox", "chatterbox_turbo", "tada", "elevenlabs"}
+CLONING_ENGINES = {"qwen", "luxtts", "chatterbox", "chatterbox_turbo", "tada", "elevenlabs", "f5tts"}
 
 
 def _profile_to_response(

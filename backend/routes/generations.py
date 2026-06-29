@@ -23,7 +23,7 @@ router = APIRouter()
 
 IMPORTED_AUDIO_PROFILE_NAME = "Imported Audio"
 IMPORT_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".webm"}
-IMPORT_AUDIO_MAX_BYTES = 200 * 1024 * 1024  # 200 MB
+IMPORT_AUDIO_MAX_BYTES = None  # None = no size limit (unlimited audio length)
 
 
 def _get_or_create_import_profile(db: Session) -> DBVoiceProfile:
@@ -434,7 +434,7 @@ async def import_audio(
         if not chunk:
             break
         total += len(chunk)
-        if total > IMPORT_AUDIO_MAX_BYTES:
+        if IMPORT_AUDIO_MAX_BYTES is not None and total > IMPORT_AUDIO_MAX_BYTES:
             raise HTTPException(
                 status_code=413,
                 detail=f"File exceeds {IMPORT_AUDIO_MAX_BYTES // (1024 * 1024)} MB limit.",

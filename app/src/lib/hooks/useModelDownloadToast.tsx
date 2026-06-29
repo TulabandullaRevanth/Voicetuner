@@ -1,5 +1,6 @@
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
+import { apiClient } from '@/lib/api/client';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/components/ui/use-toast';
 import type { ModelProgress } from '@/lib/api/types';
@@ -146,7 +147,9 @@ export function useModelDownloadToast({
               isError,
               progress: progress.progress,
             });
-            eventSource.close();
+            try {
+              eventSource.close();
+            } catch {}
             eventSourceRef.current = null;
 
             // Update toast to show completion state before callbacks
@@ -181,23 +184,70 @@ export function useModelDownloadToast({
     eventSource.onerror = (error) => {
       console.error('[useModelDownloadToast] SSE error for:', modelName, error);
       console.log('[useModelDownloadToast] EventSource readyState:', eventSource.readyState);
-      eventSource.close();
-      eventSourceRef.current = null;
-
-      // Show error toast
-      if (toastIdRef.current && toastUpdateRef.current) {
-        toastUpdateRef.current({
-          title: displayName,
-          description: 'Failed to track download progress',
-          variant: 'destructive',
-          duration: 5000,
-        });
-        toastIdRef.current = null;
-        toastUpdateRef.current = null;
-      }
+      // Do not close here — allow EventSource to auto-reconnect. We'll use a polling
+      // fallback below to detect stalled downloads and update the UI accordingly.
     };
 
     eventSourceRef.current = eventSource;
+
+    // Track last received time and poll server as a fallback if SSE stalls
+    const lastReceived = { current: Date.now() };
+    const updateLast = () => (lastReceived.current = Date.now());
+
+    // Wrap onmessage to update lastReceived
+    const origOnMessage = eventSource.onmessage;
+    eventSource.onmessage = (ev) => {
+      updateLast();
+      if (origOnMessage) origOnMessage.call(eventSource, ev as MessageEvent);
+    };
+
+    const pollInterval = setInterval(async () => {
+      try {
+        if (Date.now() - lastReceived.current < 15000) return; // recent activity
+        const status = await apiClient.getModelStatus();
+        const model = status.models.find((m) => m.model_name === modelName);
+        if (!model) return;
+
+        if (model.downloaded) {
+          // Treat as complete
+          if (toastUpdateRef.current) {
+            toastUpdateRef.current({
+              title: (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <span>{displayName}</span>
+                </div>
+              ),
+              description: 'Download complete',
+              duration: 3000,
+            });
+          }
+          if (onComplete) onComplete();
+          try {
+            eventSource.close();
+          } catch {}
+          clearInterval(pollInterval);
+        } else if (!model.downloading) {
+          // Not downloading and not downloaded -> error
+          const errMsg = 'Download stalled or failed';
+          if (toastUpdateRef.current) {
+            toastUpdateRef.current({
+              title: displayName,
+              description: errMsg,
+              variant: 'destructive',
+              duration: 5000,
+            });
+          }
+          if (onError) onError(errMsg);
+          try {
+            eventSource.close();
+          } catch {}
+          clearInterval(pollInterval);
+        }
+      } catch (e) {
+        // ignore transient errors
+      }
+    }, 3000);
 
     // Cleanup on unmount or when disabled
     return () => {

@@ -339,6 +339,44 @@ def build_pedalboard(effects_chain: List[Dict[str, Any]]) -> Pedalboard:
     return Pedalboard(plugins)
 
 
+def _tail_seconds(effects_chain: List[Dict[str, Any]]) -> float:
+    """How much trailing silence to feed the board so time-based effects can
+    ring out. pedalboard returns output the same length as input, so without
+    this the reverb/delay/echo tail gets truncated."""
+    import math
+
+    tail = 0.0
+    for eff in effects_chain:
+        if not eff.get("enabled", True):
+            continue
+        etype = eff.get("type")
+        params = eff.get("params", {}) or {}
+        if etype == "reverb":
+            tail = max(tail, 3.0)
+        elif etype == "delay":
+            delay_s = float(params.get("delay_seconds", 0.5) or 0.5)
+            feedback = float(params.get("feedback", 0.0) or 0.0)
+            feedback = min(max(feedback, 0.0), 0.99)
+            # Number of repeats until the echo decays below ~1% (-40 dB).
+            repeats = 6.0 if feedback <= 0 else math.log(0.01) / math.log(feedback)
+            tail = max(tail, min(10.0, delay_s * max(1.0, repeats)))
+        elif etype == "chorus":
+            tail = max(tail, 0.05)
+    return tail
+
+
+def _trim_trailing_silence(
+    audio: np.ndarray, sample_rate: int, threshold: float = 1e-3
+) -> np.ndarray:
+    """Drop trailing near-silence (e.g. unused tail padding), keeping a short
+    margin so a decaying tail isn't clipped abruptly."""
+    nonzero = np.where(np.abs(audio) > threshold)[0]
+    if nonzero.size == 0:
+        return audio
+    last = nonzero[-1] + int(0.05 * sample_rate)
+    return audio[: min(last, len(audio))]
+
+
 def apply_effects(
     audio: np.ndarray,
     sample_rate: int,
@@ -364,10 +402,21 @@ def apply_effects(
         audio_2d = audio[np.newaxis, :]
     else:
         audio_2d = audio
+    audio_2d = audio_2d.astype(np.float32)
 
-    processed = board(audio_2d.astype(np.float32), sample_rate)
+    # Pad with trailing silence so reverb/delay tails aren't cut off, since
+    # pedalboard returns output the same length as the input it's given.
+    tail = _tail_seconds(effects_chain)
+    if tail > 0:
+        pad = np.zeros((audio_2d.shape[0], int(tail * sample_rate)), dtype=np.float32)
+        audio_2d = np.concatenate([audio_2d, pad], axis=1)
+
+    processed = board(audio_2d, sample_rate)
 
     # Return same dimensionality as input
     if audio.ndim == 1:
-        return processed[0]
+        out = processed[0]
+        if tail > 0:
+            out = _trim_trailing_silence(out, sample_rate)
+        return out
     return processed

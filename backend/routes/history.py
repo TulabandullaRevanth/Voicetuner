@@ -44,14 +44,7 @@ async def import_generation(
     db: Session = Depends(get_db),
 ):
     """Import a generation from a ZIP archive."""
-    MAX_FILE_SIZE = 50 * 1024 * 1024
-
     content = await file.read()
-
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024 * 1024)}MB"
-        )
 
     try:
         result = await export_import.import_generation_from_zip(content, db)

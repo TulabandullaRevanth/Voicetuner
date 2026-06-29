@@ -1,3 +1,4 @@
+
 # Dependencies
 node_modules/
 bun.lockb
@@ -68,3 +69,14 @@ temp/
 backend/tests/results/
 backend/tests/fixtures/reference_voice.wav
 backend/tests/fixtures/reference_voice.txt
+
+# SSL certificates (private keys)
+nginx/certs/*.key
+nginx/certs/*.crt
+nginx/certs/*.pem
+
+# Database backups
+backups/
+
+# Claude Code assistant memory
+.claude/

@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
-import { Edit2, Mic, Monitor, Music, Upload, X } from 'lucide-react';
+import { Edit2, Mic, Music, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
@@ -49,18 +49,14 @@ import {
   useUpdateProfile,
   useUploadAvatar,
 } from '@/lib/hooks/useProfiles';
-import { useSystemAudioCapture } from '@/lib/hooks/useSystemAudioCapture';
 import { useTranscription } from '@/lib/hooks/useTranscription';
-import { convertToWav, formatAudioDuration, getAudioDuration } from '@/lib/utils/audio';
-import { usePlatform } from '@/platform/PlatformContext';
+import { convertToWav, getAudioDuration } from '@/lib/utils/audio';
 import { useServerStore } from '@/stores/serverStore';
 import { type ProfileFormDraft, useUIStore } from '@/stores/uiStore';
 import { AudioSampleRecording } from './AudioSampleRecording';
-import { AudioSampleSystem } from './AudioSampleSystem';
 import { AudioSampleUpload } from './AudioSampleUpload';
 import { SampleList } from './SampleList';
 
-const MAX_AUDIO_DURATION_SECONDS = 30;
 const PRESET_ONLY_ENGINES = new Set(['kokoro', 'qwen_custom_voice', 'sarvam']);
 const DEFAULT_ENGINE_OPTIONS = [
   { value: 'qwen', label: 'Qwen3-TTS' },
@@ -131,7 +127,6 @@ function base64ToFile(base64: string, fileName: string, fileType: string): File 
 
 export function ProfileForm() {
   const { t } = useTranslation();
-  const platform = usePlatform();
   const open = useUIStore((state) => state.profileDialogOpen);
   const setOpen = useUIStore((state) => state.setProfileDialogOpen);
   const editingProfileId = useUIStore((state) => state.editingProfileId);
@@ -148,8 +143,8 @@ export function ProfileForm() {
   const transcribe = useTranscription();
   const { toast } = useToast();
   const [voiceSource, setVoiceSource] = useState<'clone' | 'builtin'>('clone');
-  const [sampleMode, setSampleMode] = useState<'upload' | 'record' | 'system'>('record');
-  const [audioDuration, setAudioDuration] = useState<number | null>(null);
+  const [sampleMode, setSampleMode] = useState<'upload' | 'record'>('record');
+  const [, setAudioDuration] = useState<number | null>(null);
   const [isValidatingAudio, setIsValidatingAudio] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [selectedPresetEngine, setSelectedPresetEngine] = useState<string>('kokoro');
@@ -185,17 +180,7 @@ export function ProfileForm() {
       getAudioDuration(selectedFile as File & { recordedDuration?: number })
         .then((duration) => {
           setAudioDuration(duration);
-          if (duration > MAX_AUDIO_DURATION_SECONDS) {
-            form.setError('sampleFile', {
-              type: 'manual',
-              message: t('profileForm.validation.audioTooLong', {
-                duration: formatAudioDuration(duration),
-                max: formatAudioDuration(MAX_AUDIO_DURATION_SECONDS),
-              }),
-            });
-          } else {
-            form.clearErrors('sampleFile');
-          }
+          form.clearErrors('sampleFile');
         })
         .catch((error) => {
           console.error('Failed to get audio duration:', error);
@@ -230,7 +215,6 @@ export function ProfileForm() {
     stopRecording,
     cancelRecording,
   } = useAudioRecording({
-    maxDurationSeconds: 29,
     onRecordingComplete: (blob, recordedDuration) => {
       const file = new File([blob], `recording-${Date.now()}.webm`, {
         type: blob.type || 'audio/webm',
@@ -243,32 +227,6 @@ export function ProfileForm() {
       toast({
         title: t('profileForm.toast.recordingComplete'),
         description: t('profileForm.toast.recordingCompleteDescription'),
-      });
-    },
-  });
-
-  const {
-    isRecording: isSystemRecording,
-    duration: systemDuration,
-    error: systemRecordingError,
-    isSupported: isSystemAudioSupported,
-    startRecording: startSystemRecording,
-    stopRecording: stopSystemRecording,
-    cancelRecording: cancelSystemRecording,
-  } = useSystemAudioCapture({
-    maxDurationSeconds: 29,
-    onRecordingComplete: (blob, recordedDuration) => {
-      const file = new File([blob], `system-audio-${Date.now()}.wav`, {
-        type: blob.type || 'audio/wav',
-      }) as File & { recordedDuration?: number };
-      // Store the actual recorded duration to bypass metadata reading issues on Windows
-      if (recordedDuration !== undefined) {
-        file.recordedDuration = recordedDuration;
-      }
-      form.setValue('sampleFile', file, { shouldValidate: true });
-      toast({
-        title: t('profileForm.toast.systemAudioCaptured'),
-        description: t('profileForm.toast.systemAudioCapturedDescription'),
       });
     },
   });
@@ -303,16 +261,6 @@ export function ProfileForm() {
       });
     }
   }, [recordingError, toast, t]);
-
-  useEffect(() => {
-    if (systemRecordingError) {
-      toast({
-        title: t('profileForm.toast.systemAudioError'),
-        description: systemRecordingError,
-        variant: 'destructive',
-      });
-    }
-  }, [systemRecordingError, toast, t]);
 
   // Handle avatar preview
   useEffect(() => {
@@ -353,7 +301,7 @@ export function ProfileForm() {
         sampleFile: undefined,
         avatarFile: undefined,
       });
-      setSampleMode(profileFormDraft.sampleMode);
+      if (profileFormDraft.sampleMode !== 'system') setSampleMode(profileFormDraft.sampleMode);
       // Restore the file if we have it saved
       if (
         profileFormDraft.sampleFileData &&
@@ -430,8 +378,6 @@ export function ProfileForm() {
   function handleCancelRecording() {
     if (sampleMode === 'record') {
       cancelRecording();
-    } else if (sampleMode === 'system') {
-      cancelSystemRecording();
     }
     form.resetField('sampleFile');
     cleanupAudio();
@@ -623,25 +569,7 @@ export function ProfileForm() {
         }
 
         try {
-          const duration = await getAudioDuration(sampleFile);
-          if (duration > MAX_AUDIO_DURATION_SECONDS) {
-            form.setError('sampleFile', {
-              type: 'manual',
-              message: t('profileForm.validation.audioTooLong', {
-                duration: formatAudioDuration(duration),
-                max: formatAudioDuration(MAX_AUDIO_DURATION_SECONDS),
-              }),
-            });
-            toast({
-              title: t('profileForm.toast.invalidAudio'),
-              description: t('profileForm.toast.invalidAudioDescription', {
-                duration: formatAudioDuration(duration),
-                max: formatAudioDuration(MAX_AUDIO_DURATION_SECONDS),
-              }),
-              variant: 'destructive',
-            });
-            return;
-          }
+          await getAudioDuration(sampleFile);
         } catch (error) {
           form.setError('sampleFile', {
             type: 'manual',
@@ -792,9 +720,6 @@ export function ProfileForm() {
       if (isRecording) {
         cancelRecording();
       }
-      if (isSystemRecording) {
-        cancelSystemRecording();
-      }
       cleanupAudio();
     }
   }
@@ -944,20 +869,14 @@ export function ProfileForm() {
                             className="pt-0"
                             value={sampleMode}
                             onValueChange={(v) => {
-                              const newMode = v as 'upload' | 'record' | 'system';
-                              // Cancel any active recordings when switching modes
+                              const newMode = v as 'upload' | 'record';
                               if (isRecording && newMode !== 'record') {
                                 cancelRecording();
-                              }
-                              if (isSystemRecording && newMode !== 'system') {
-                                cancelSystemRecording();
                               }
                               setSampleMode(newMode);
                             }}
                           >
-                            <TabsList
-                              className={`grid w-full ${platform.metadata.isTauri && isSystemAudioSupported ? 'grid-cols-3' : 'grid-cols-2'}`}
-                            >
+                            <TabsList className="grid w-full grid-cols-2">
                               <TabsTrigger value="upload" className="flex items-center gap-2">
                                 <Upload className="h-4 w-4 shrink-0" />
                                 {t('profileForm.sampleTabs.upload')}
@@ -966,12 +885,6 @@ export function ProfileForm() {
                                 <Mic className="h-4 w-4 shrink-0" />
                                 {t('profileForm.sampleTabs.record')}
                               </TabsTrigger>
-                              {platform.metadata.isTauri && isSystemAudioSupported && (
-                                <TabsTrigger value="system" className="flex items-center gap-2">
-                                  <Monitor className="h-4 w-4 shrink-0" />
-                                  {t('profileForm.sampleTabs.system')}
-                                </TabsTrigger>
-                              )}
                             </TabsList>
 
                             <TabsContent value="upload" className="space-y-4">
@@ -987,10 +900,7 @@ export function ProfileForm() {
                                     isPlaying={isPlaying}
                                     isValidating={isValidatingAudio}
                                     isTranscribing={transcribe.isPending}
-                                    isDisabled={
-                                      audioDuration !== null &&
-                                      audioDuration > MAX_AUDIO_DURATION_SECONDS
-                                    }
+                                    isDisabled={false}
                                     fieldName={name}
                                   />
                                 )}
@@ -1018,28 +928,6 @@ export function ProfileForm() {
                               />
                             </TabsContent>
 
-                            {platform.metadata.isTauri && isSystemAudioSupported && (
-                              <TabsContent value="system" className="space-y-4">
-                                <FormField
-                                  control={form.control}
-                                  name="sampleFile"
-                                  render={() => (
-                                    <AudioSampleSystem
-                                      file={selectedFile}
-                                      isRecording={isSystemRecording}
-                                      duration={systemDuration}
-                                      onStart={startSystemRecording}
-                                      onStop={stopSystemRecording}
-                                      onCancel={handleCancelRecording}
-                                      onTranscribe={handleTranscribe}
-                                      onPlayPause={handlePlayPause}
-                                      isPlaying={isPlaying}
-                                      isTranscribing={transcribe.isPending}
-                                    />
-                                  )}
-                                />
-                              </TabsContent>
-                            )}
                           </Tabs>
 
                           <FormField

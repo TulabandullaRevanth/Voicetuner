@@ -125,7 +125,7 @@ export function AudioPlayer() {
           interact: true,
           dragToSeek: { debounceTime: 0 },
           mediaControls: false,
-          backend: 'WebAudio',
+          backend: 'MediaElement',
         });
 
         // Wire up event handlers (these persist for the lifetime of the instance)
@@ -161,8 +161,13 @@ export function AudioPlayer() {
           const shouldAutoPlayNow = usePlayerStore.getState().shouldAutoPlay;
           if (shouldAutoPlayNow) {
             usePlayerStore.getState().clearAutoPlayFlag();
+            // Set isPlaying=true in the store BEFORE calling play() so the
+            // isPlaying sync effect (which re-runs when duration changes) sees
+            // isPlaying=true and doesn't call wavesurfer.pause() on us.
+            setIsPlaying(true);
             wavesurfer.play().catch((err) => {
               debug.error('Failed to autoplay:', err);
+              setIsPlaying(false);
             });
           } else {
             debug.log('Skipping auto-play - shouldAutoPlay is false');
@@ -212,6 +217,10 @@ export function AudioPlayer() {
         });
 
         wavesurfer.on('loading', (percent) => {
+          // Guard: the <audio> element fires 'progress' (→ loading) even after
+          // 'ready' fires as the browser continues buffering. Ignore those late
+          // events so they don't re-disable the play/pause button mid-playback.
+          if (!loadingRef.current) return;
           setIsLoading(true);
           if (percent === 100) setIsLoading(false);
         });

@@ -359,6 +359,14 @@ def _get_non_qwen_tts_configs() -> list[ModelConfig]:
             languages=["en", "ar", "zh", "de", "es", "fr", "it", "ja", "pl", "pt"],
         ),
         ModelConfig(
+            model_name="f5tts",
+            display_name="F5-TTS (Zero-shot Clone)",
+            engine="f5tts",
+            hf_repo_id="SWivid/F5-TTS",
+            size_mb=800,
+            languages=["en", "zh"],
+        ),
+        ModelConfig(
             model_name="kokoro",
             display_name="Kokoro 82M",
             engine="kokoro",
@@ -625,23 +633,36 @@ def check_model_loaded(config: ModelConfig) -> bool:
 
 
 def get_model_load_func(config: ModelConfig):
-    """Return a callable that loads/downloads the model."""
+    """Return a callable that loads/downloads the model.
+    
+    Returns an async callable that can be awaited to load the model.
+    """
     from . import get_tts_backend_for_engine
     from ..services import tts, transcribe, llm as llm_service
 
     if config.engine == "whisper":
-        return lambda: transcribe.get_whisper_model().load_model(config.model_size)
+        async def _load_whisper():
+            return await transcribe.get_whisper_model().load_model(config.model_size)
+        return _load_whisper
 
     if config.engine == "qwen":
-        return lambda: tts.get_tts_model().load_model(config.model_size)
+        async def _load_qwen():
+            return await tts.get_tts_model().load_model(config.model_size)
+        return _load_qwen
 
     if config.engine == "qwen_custom_voice":
-        return lambda: get_tts_backend_for_engine(config.engine).load_model(config.model_size)
+        async def _load_qwen_custom():
+            return await get_tts_backend_for_engine(config.engine).load_model(config.model_size)
+        return _load_qwen_custom
 
     if config.engine == "qwen_llm":
-        return lambda: llm_service.get_llm_model().load_model(config.model_size)
+        async def _load_qwen_llm():
+            return await llm_service.get_llm_model().load_model(config.model_size)
+        return _load_qwen_llm
 
-    return lambda: get_tts_backend_for_engine(config.engine).load_model()
+    async def _load_default():
+        return await get_tts_backend_for_engine(config.engine).load_model()
+    return _load_default
 
 
 def get_tts_backend() -> TTSBackend:
@@ -718,6 +739,10 @@ def get_tts_backend_for_engine(engine: str) -> TTSBackend:
             from ..adapters.elevenlabs import ElevenLabsTTSBackend
 
             backend = ElevenLabsTTSBackend()
+        elif engine == "f5tts":
+            from .f5tts_backend import F5TTSBackend
+
+            backend = F5TTSBackend()
         else:
             raise ValueError(f"Unknown TTS engine: {engine}. Supported: {list(TTS_ENGINES.keys())}")
 

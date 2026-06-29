@@ -8,8 +8,6 @@ without changing any importers.
 from .models import (
     Base,
     AudioChannel,
-    Capture,
-    CaptureSettings,
     ChannelDeviceMapping,
     EffectPreset,
     Generation,
@@ -21,6 +19,7 @@ from .models import (
     Project,
     Story,
     StoryItem,
+    Transcription,
     VoiceProfile,
 )
 from .session import engine, SessionLocal, init_db, get_db
@@ -29,8 +28,6 @@ __all__ = [
     # Models
     "Base",
     "AudioChannel",
-    "Capture",
-    "CaptureSettings",
     "ChannelDeviceMapping",
     "EffectPreset",
     "Generation",
@@ -42,6 +39,7 @@ __all__ = [
     "Project",
     "Story",
     "StoryItem",
+    "Transcription",
     "VoiceProfile",
     # Session
     "engine",

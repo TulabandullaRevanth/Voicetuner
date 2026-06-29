@@ -387,7 +387,7 @@ async def get_model_status():
 @router.post("/models/download")
 async def trigger_model_download(request: models.ModelDownloadRequest):
     """Trigger download of a specific model."""
-    from ..backends import get_model_config, get_model_load_func
+    from ..backends import get_model_config
 
     task_manager = get_task_manager()
     progress_manager = get_progress_manager()
@@ -396,16 +396,81 @@ async def trigger_model_download(request: models.ModelDownloadRequest):
     if not config:
         raise HTTPException(status_code=400, detail=f"Unknown model: {request.model_name}")
 
-    load_func = get_model_load_func(config)
-
     async def download_in_background():
         try:
-            result = load_func()
-            if asyncio.iscoroutine(result):
-                await result
+            # Start a cache monitor task as a fallback progress source in
+            # case the HF tqdm monkey-patch doesn't emit progress updates
+            # for the current environment. It polls the HF cache for the
+            # repo's blob size and reports bytes downloaded.
+            from huggingface_hub import constants as hf_constants
+
+            repo_cache_dir = Path(hf_constants.HF_HUB_CACHE) / ("models--" + config.hf_repo_id.replace("/", "--"))
+            estimated_total = None
+            try:
+                # Use configured size_mb when available as an estimate
+                if getattr(config, "size_mb", None):
+                    estimated_total = int(config.size_mb * 1024 * 1024)
+            except Exception:
+                estimated_total = None
+
+            async def _monitor_cache():
+                try:
+                    while True:
+                        try:
+                            total_bytes = 0
+                            if repo_cache_dir.exists():
+                                for f in repo_cache_dir.rglob("*"):
+                                    if f.is_file():
+                                        try:
+                                            total_bytes += f.stat().st_size
+                                        except Exception:
+                                            pass
+                            progress_manager.update_progress(
+                                request.model_name,
+                                current=total_bytes,
+                                total=estimated_total or 0,
+                                filename=None,
+                                status="downloading",
+                            )
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.5)
+                except asyncio.CancelledError:
+                    return
+
+            monitor_task = create_background_task(_monitor_cache())
+
+            # Fetch the model files into the HF cache WITHOUT loading the model
+            # into memory. Loading a large model (e.g. Qwen 1.7B) as part of a
+            # "download" can exhaust RAM and crash/restart the process mid-fetch;
+            # the actual load is deferred to first use instead.
+            from huggingface_hub import snapshot_download
+
+            try:
+                await asyncio.to_thread(
+                    snapshot_download,
+                    repo_id=config.hf_repo_id,
+                )
+            finally:
+                try:
+                    monitor_task.cancel()
+                except Exception:
+                    pass
+
+            # Ensure both TaskManager and ProgressManager are updated so
+            # SSE clients receive a terminal "complete" event.
             task_manager.complete_download(request.model_name)
+            try:
+                progress_manager.mark_complete(request.model_name)
+            except Exception:
+                # Swallow to avoid breaking background task completion
+                pass
         except Exception as e:
             task_manager.error_download(request.model_name, str(e))
+            try:
+                progress_manager.mark_error(request.model_name, str(e))
+            except Exception:
+                pass
 
     task_manager.start_download(request.model_name)
 

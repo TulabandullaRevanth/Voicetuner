@@ -44,7 +44,14 @@ async def preview_effects(
     if resolved_source_path is None or not resolved_source_path.exists():
         raise HTTPException(status_code=404, detail="Source audio file not found")
 
-    audio, sample_rate = await asyncio.to_thread(load_audio, str(resolved_source_path))
+    # Preview only a short head snippet rather than the whole clip. Processing
+    # (and streaming back) a full multi-minute generation makes the preview
+    # request slow enough to time out in the UI ("failed to apply effects").
+    # A ~20s sample is plenty to hear what the effect does.
+    PREVIEW_SECONDS = 20.0
+    audio, sample_rate = await asyncio.to_thread(
+        load_audio, str(resolved_source_path), 24000, True, 0.0, PREVIEW_SECONDS
+    )
     processed = await asyncio.to_thread(apply_effects, audio, sample_rate, chain_dicts)
 
     import soundfile as sf

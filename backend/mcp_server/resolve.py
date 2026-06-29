@@ -3,14 +3,12 @@
 Precedence:
   1. Explicit tool arg (profile name or id)
   2. Per-client MCPClientBinding.profile_id
-  3. CaptureSettings.default_playback_voice_id (global default)
-  4. None — caller raises a helpful error
+  3. None — caller raises a helpful error
 """
 
 from sqlalchemy.orm import Session
 
 from ..database import VoiceProfile as DBVoiceProfile, get_db
-from ..database.models import CaptureSettings
 from ..services.profiles import get_profile_orm_by_name_or_id as _lookup_profile
 
 
@@ -41,13 +39,6 @@ def resolve_profile(
             profile = _lookup_profile(binding.profile_id, db)
             if profile is not None:
                 return profile
-
-    # Global default from capture settings.
-    settings = db.query(CaptureSettings).filter(CaptureSettings.id == 1).first()
-    if settings and settings.default_playback_voice_id:
-        profile = _lookup_profile(settings.default_playback_voice_id, db)
-        if profile is not None:
-            return profile
 
     return None
 

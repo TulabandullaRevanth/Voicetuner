@@ -101,8 +101,31 @@ def resolve_storage_path(path: str | Path | None) -> Path | None:
 
 
 def get_database_url() -> str:
-    """Return the PostgreSQL connection URL from DATABASE_URL env var."""
+    """Return the PostgreSQL connection URL.
+
+    Priority:
+    1. If individual `POSTGRES_*` env vars are set, build the URL from them (and
+       safely URL-encode the password so characters like '@' don't break parsing).
+    2. Otherwise fall back to the `DATABASE_URL` env var or a localhost default.
+    """
     import os
+    from urllib.parse import quote_plus
+
+    # If the user provided explicit POSTGRES_* variables (commonly set by
+    # docker-compose), prefer constructing the URL from them and quote the
+    # password so special characters are safe in the connection string.
+    pg_user = os.environ.get("POSTGRES_USER")
+    if pg_user:
+        pg_password = os.environ.get("POSTGRES_PASSWORD", "")
+        pg_host = os.environ.get("POSTGRES_HOST", "postgres")
+        pg_port = os.environ.get("POSTGRES_PORT", "5432")
+        pg_db = os.environ.get("POSTGRES_DB", "voicetuner")
+
+        quoted_pw = quote_plus(pg_password)
+        url = f"postgresql://{pg_user}:{quoted_pw}@{pg_host}:{pg_port}/{pg_db}"
+        return url
+
+    # Fall back to DATABASE_URL env var if present
     url = os.environ.get(
         "DATABASE_URL",
         "postgresql://voicetuner:voicetuner_dev@localhost:5432/voicetuner",

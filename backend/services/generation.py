@@ -51,10 +51,14 @@ async def run_generation(
     from ..backends import load_engine_model, get_tts_backend_for_engine, engine_needs_trim
     from .speech_router import resolve_tts_engine
     from ..utils.chunked_tts import generate_chunked
-    from ..utils.audio import normalize_audio, save_audio, trim_tts_output
+    from ..utils.audio import normalize_audio, normalize_audio_file, save_audio, trim_tts_output
 
     task_manager = get_task_manager()
     bg_db = next(get_db())
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("run_generation: starting generation %s (engine=%s, model_size=%s)", generation_id, engine, model_size)
 
     try:
         # Route language to the right provider (e.g. Telugu -> Sarvam cloud).
@@ -62,9 +66,15 @@ async def run_generation(
         tts_model = get_tts_backend_for_engine(engine)
 
         if not tts_model.is_loaded():
+            logger.info("Generation %s: model not loaded, marking loading_model", generation_id)
             await history.update_generation_status(generation_id, "loading_model", bg_db)
 
-        await load_engine_model(engine, model_size)
+        logger.info("Generation %s: ensuring engine model %s/%s is loaded", generation_id, engine, model_size)
+        try:
+            await load_engine_model(engine, model_size)
+        except Exception as e:
+            logger.exception("Generation %s: error loading model: %s", generation_id, e)
+            raise
 
         voice_prompt = await profiles.create_voice_prompt_for_profile(
             profile_id,
@@ -73,6 +83,7 @@ async def run_generation(
             engine=engine,
         )
 
+        logger.info("Generation %s: starting chunked generation", generation_id)
         await history.update_generation_status(generation_id, "generating", bg_db)
         trim_fn = trim_tts_output if engine_needs_trim(engine) else None
 
@@ -87,31 +98,79 @@ async def run_generation(
         if crossfade_ms is not None:
             gen_kwargs["crossfade_ms"] = crossfade_ms
 
-        audio, sample_rate = await generate_chunked(tts_model, text, voice_prompt, **gen_kwargs)
+        # For generate/retry modes, stream directly to the output file so
+        # multi-hour audio never accumulates in RAM.
+        stream_output_path: str | None = None
+        if mode in ("generate", "retry"):
+            stream_output_path = str(config.get_generations_dir() / f"{generation_id}.wav")
+            gen_kwargs["output_path"] = stream_output_path
+
+        try:
+            audio, sample_rate = await generate_chunked(tts_model, text, voice_prompt, **gen_kwargs)
+        except Exception:
+            logger.exception("Generation %s: chunked generation failed", generation_id)
+            raise
+
+        streamed_to_file = audio is None and stream_output_path is not None
+
+        if streamed_to_file:
+            import soundfile as sf
+            info = sf.info(stream_output_path)
+            duration = info.duration
+            logger.info(
+                "Generation %s: streaming complete, duration=%.1fs, file=%s",
+                generation_id, duration, stream_output_path,
+            )
+        else:
+            logger.info(
+                "Generation %s: chunked generation completed, audio samples=%d, sample_rate=%s",
+                generation_id, len(audio), sample_rate,
+            )
 
         # --- Normalize (generate and regenerate always; retry skips) -----
         if normalize or mode == "regenerate":
-            audio = normalize_audio(audio)
+            if streamed_to_file:
+                normalize_audio_file(stream_output_path)
+            else:
+                audio = normalize_audio(audio)
 
-        duration = len(audio) / sample_rate
+        if not streamed_to_file:
+            duration = len(audio) / sample_rate
 
         # --- Persist audio and update status -----------------------------
         if mode == "generate":
-            final_path = _save_generate(
-                generation_id=generation_id,
-                audio=audio,
-                sample_rate=sample_rate,
-                effects_chain=effects_chain,
-                save_audio=save_audio,
-                db=bg_db,
-            )
+            if streamed_to_file:
+                # File already at its final path — just register the version.
+                from . import versions as versions_mod
+                from .. import config as _cfg
+                final_path = config.to_storage_path(stream_output_path)
+                versions_mod.create_version(
+                    generation_id=generation_id,
+                    label="original",
+                    audio_path=final_path,
+                    db=bg_db,
+                    effects_chain=None,
+                    is_default=True,
+                )
+            else:
+                final_path = _save_generate(
+                    generation_id=generation_id,
+                    audio=audio,
+                    sample_rate=sample_rate,
+                    effects_chain=effects_chain,
+                    save_audio=save_audio,
+                    db=bg_db,
+                )
         elif mode == "retry":
-            final_path = _save_retry(
-                generation_id=generation_id,
-                audio=audio,
-                sample_rate=sample_rate,
-                save_audio=save_audio,
-            )
+            if streamed_to_file:
+                final_path = config.to_storage_path(stream_output_path)
+            else:
+                final_path = _save_retry(
+                    generation_id=generation_id,
+                    audio=audio,
+                    sample_rate=sample_rate,
+                    save_audio=save_audio,
+                )
         elif mode == "regenerate":
             final_path = _save_regenerate(
                 generation_id=generation_id,

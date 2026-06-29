@@ -877,10 +877,6 @@ async def export_story_audio(
             trim_start_ms = getattr(item, "trim_start_ms", 0)
             trim_end_ms = getattr(item, "trim_end_ms", 0)
 
-            # Calculate effective duration
-            original_duration_ms = int(generation.duration * 1000)
-            effective_duration_ms = original_duration_ms - trim_start_ms - trim_end_ms
-
             # Slice audio based on trim values
             trim_start_sample = int((trim_start_ms / 1000.0) * sample_rate)
             trim_end_sample = int((trim_end_ms / 1000.0) * sample_rate)
@@ -892,6 +888,16 @@ async def export_story_audio(
                 )
             else:
                 trimmed_audio = audio[trim_start_sample:]
+
+            # Skip clips that trim down to nothing (e.g. trim >= clip length).
+            if trimmed_audio.size == 0:
+                continue
+
+            # Derive duration from the ACTUAL trimmed audio rather than the
+            # stored generation.duration — that field can be stale/mismatched
+            # (e.g. after a data import) and would otherwise yield a
+            # zero/negative-length mix and crash normalization below.
+            effective_duration_ms = int(len(trimmed_audio) / sample_rate * 1000)
 
             # Apply per-clip volume to the export mix.
             volume = float(getattr(item, "volume", 1.0) or 1.0)
@@ -920,6 +926,8 @@ async def export_story_audio(
 
     # Convert to samples
     total_samples = int((max_end_time_ms / 1000.0) * sample_rate)
+    if total_samples <= 0:
+        return None
 
     # Create output buffer initialized to zeros
     final_audio = np.zeros(total_samples, dtype=np.float32)
@@ -944,8 +952,8 @@ async def export_story_audio(
             # Normalize to prevent clipping (simple approach: divide by max)
             final_audio[start_sample:end_sample] += audio_to_mix
 
-    # Normalize to prevent clipping
-    max_val = np.abs(final_audio).max()
+    # Normalize to prevent clipping (guard against an empty mix).
+    max_val = np.abs(final_audio).max() if final_audio.size else 0.0
     if max_val > 1.0:
         final_audio = final_audio / max_val
 

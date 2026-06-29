@@ -122,22 +122,42 @@ async def update_generation_status(
     duration: Optional[float] = None,
     error: Optional[str] = None,
 ) -> Optional[GenerationResponse]:
-    """Update the status of a generation (used by async generation flow)."""
-    generation = db.query(DBGeneration).filter_by(id=generation_id).first()
-    if not generation:
-        return None
+    """Update the status of a generation (used by async generation flow).
 
-    generation.status = status
-    if audio_path is not None:
-        generation.audio_path = audio_path
-    if duration is not None:
-        generation.duration = duration
-    if error is not None:
-        generation.error = error
+    Retries a few times on transient DB errors (e.g. SQLite busy/locked)
+    to reduce the chance that a worker exits without persisting a final
+    status and leaving the UI stuck in "generating".
+    """
+    import asyncio as _asyncio
+    from sqlalchemy.exc import OperationalError as _OpErr
 
-    db.commit()
-    db.refresh(generation)
-    return GenerationResponse.model_validate(generation)
+    attempts = 0
+    max_attempts = 5
+    backoff = 0.05
+
+    while attempts < max_attempts:
+        try:
+            generation = db.query(DBGeneration).filter_by(id=generation_id).first()
+            if not generation:
+                return None
+
+            generation.status = status
+            if audio_path is not None:
+                generation.audio_path = audio_path
+            if duration is not None:
+                generation.duration = duration
+            if error is not None:
+                generation.error = error
+
+            db.commit()
+            db.refresh(generation)
+            return GenerationResponse.model_validate(generation)
+        except _OpErr:
+            attempts += 1
+            if attempts >= max_attempts:
+                raise
+            await _asyncio.sleep(backoff)
+            backoff *= 2
 
 
 async def get_generation(

@@ -1,9 +1,8 @@
 """
 Single source of truth for VoiceTuner's supported languages.
 
-VoiceTuner restricts the platform to English (en), Hindi (hi), and Telugu (te).
-Every validation layer, engine registry, and route should derive its allow-list
-from here rather than hard-coding ISO code lists.
+VoiceTuner is English-only. Every validation layer, engine registry, and route
+should derive its allow-list from here rather than hard-coding ISO code lists.
 
 The set can be overridden at deploy time via the SUPPORTED_LANGUAGES env var
 (comma-separated), but do NOT add a code the speech stack cannot actually serve
@@ -14,32 +13,26 @@ from __future__ import annotations
 
 import os
 
-# Canonical allow-list. Override with SUPPORTED_LANGUAGES="en,hi,te".
+# English-only. Override at deploy time via SUPPORTED_LANGUAGES env var if needed.
 SUPPORTED_LANGUAGES: list[str] = [
     c.strip().lower()
-    for c in os.getenv("SUPPORTED_LANGUAGES", "en,hi,te").split(",")
+    for c in os.getenv("SUPPORTED_LANGUAGES", "en").split(",")
     if c.strip()
 ]
 
 # Whisper / engine-facing language *names* (lowercase, as some backends expect).
 LANGUAGE_NAMES: dict[str, str] = {
     "en": "english",
-    "hi": "hindi",
-    "te": "telugu",
 }
 
-# Human-readable labels for UI / API responses (native script).
+# Human-readable labels for UI / API responses.
 LANGUAGE_LABELS: dict[str, str] = {
     "en": "English",
-    "hi": "हिन्दी",
-    "te": "తెలుగు",
 }
 
-# Provider locale tags (used by Sarvam / cloud adapters that want BCP-47-ish codes).
+# Provider locale tags (used by cloud adapters that want BCP-47-ish codes).
 PROVIDER_LOCALE: dict[str, str] = {
     "en": "en-IN",
-    "hi": "hi-IN",
-    "te": "te-IN",
 }
 
 # Regex fragment for pydantic Field(pattern=...). e.g. "^(en|hi|te)$"

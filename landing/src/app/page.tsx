@@ -4,7 +4,6 @@ import {Github} from "lucide-react";
 import {useEffect, useState} from "react";
 import {AgentIntegration} from "@/components/AgentIntegration";
 import {ApiSection} from "@/components/ApiSection";
-import {CaptureSection} from "@/components/CaptureSection";
 import {ControlUI} from "@/components/ControlUI";
 import {Features} from "@/components/Features";
 import {Footer} from "@/components/Footer";
@@ -139,9 +138,6 @@ export default function Home() {
 
 			{/* ── Voice Creator ────────────────────────────────────────── */}
 			<VoiceCreator />
-
-			{/* ── Capture (dictation + STT + play as voice) ───────────── */}
-			<CaptureSection />
 
 			{/* ── Agent integration (speak primitive + MCP) ───────────── */}
 			<AgentIntegration />

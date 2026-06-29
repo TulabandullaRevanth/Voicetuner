@@ -38,7 +38,7 @@ const ENGINE_DESCRIPTIONS: Record<string, string> = {
   chatterbox_turbo: 'English, [laugh] [cough] tags',
   tada: 'HumeAI, 700s+ coherent audio',
   kokoro: '82M params, CPU realtime, 8 langs',
-  sarvam: 'Cloud: English, Hindi, Telugu (free tier)',
+  sarvam: 'Cloud: English (free tier)',
 };
 
 /** Engines that only support English and should force language to 'en' on select. */

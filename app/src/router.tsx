@@ -6,12 +6,11 @@ import {
   redirect,
 } from '@tanstack/react-router';
 import { AppFrame } from '@/components/AppFrame/AppFrame';
-import { CapturesTab } from '@/components/CapturesTab/CapturesTab';
+import { DictationTab } from '@/components/DictationTab/DictationTab';
 import { EffectsTab } from '@/components/EffectsTab/EffectsTab';
 import { MainEditor } from '@/components/MainEditor/MainEditor';
 import { ModelsTab } from '@/components/ModelsTab/ModelsTab';
 import { AboutPage } from '@/components/ServerTab/AboutPage';
-import { CapturesPage } from '@/components/ServerTab/CapturesPage';
 import { ChangelogPage } from '@/components/ServerTab/ChangelogPage';
 import { GeneralPage } from '@/components/ServerTab/GeneralPage';
 import { GenerationPage } from '@/components/ServerTab/GenerationPage';
@@ -113,11 +112,11 @@ const voicesRoute = createRoute({
   component: VoicesTab,
 });
 
-// Captures route (prototype — will replace AudioTab once the new flow is ready)
-const capturesRoute = createRoute({
+// Dictation (speech-to-text) route
+const dictationRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/captures',
-  component: CapturesTab,
+  path: '/dictation',
+  component: DictationTab,
 });
 
 // Effects route
@@ -152,12 +151,6 @@ const settingsGenerationRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: '/generation',
   component: GenerationPage,
-});
-
-const settingsCapturesRoute = createRoute({
-  getParentRoute: () => settingsRoute,
-  path: '/captures',
-  component: CapturesPage,
 });
 
 const settingsMCPRoute = createRoute({
@@ -203,14 +196,13 @@ const serverRedirectRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   storiesRoute,
-  capturesRoute,
   voicesRoute,
+  dictationRoute,
   effectsRoute,
   modelsRoute,
   settingsRoute.addChildren([
     settingsGeneralRoute,
     settingsGenerationRoute,
-    settingsCapturesRoute,
     settingsMCPRoute,
     settingsGpuRoute,
     settingsLogsRoute,

@@ -87,6 +87,8 @@ export interface GenerationRequest {
   crossfade_ms?: number;
   normalize?: boolean;
   effects_chain?: EffectConfig[];
+  /** macOS `say` voice name used by the offline stub (ignored by real backend). */
+  stub_voice?: string;
 }
 
 export interface GenerationVersionResponse {
@@ -141,110 +143,6 @@ export type WhisperModelSize = 'base' | 'small' | 'medium' | 'large' | 'turbo';
 
 export type Qwen3ModelSize = '0.6B' | '1.7B' | '4B';
 
-export type CaptureSource = 'dictation' | 'recording' | 'file';
-
-/**
- * Snapshot of the accessibility-focused UI element at chord-start. Emitted
- * from Rust as part of the ``dictate:start`` payload so the frontend can
- * pass it back to ``paste_final_text`` once the final text is ready.
- */
-export interface FocusSnapshot {
-  pid: number;
-  bundle_id: string | null;
-  role: string | null;
-}
-
-export interface RefinementFlags {
-  smart_cleanup: boolean;
-  self_correction: boolean;
-  preserve_technical: boolean;
-}
-
-export interface CaptureResponse {
-  id: string;
-  audio_path: string;
-  source: CaptureSource;
-  language?: string | null;
-  duration_ms?: number | null;
-  transcript_raw: string;
-  transcript_refined?: string | null;
-  stt_model?: string | null;
-  llm_model?: string | null;
-  refinement_flags?: RefinementFlags | null;
-  identified_profile_id?: string | null;
-  identified_profile_name?: string | null;
-  speaker_confidence?: number | null;
-  created_at: string;
-}
-
-export interface CaptureListResponse {
-  items: CaptureResponse[];
-  total: number;
-}
-
-/**
- * Response of ``POST /captures``. Adds ``auto_refine`` and ``allow_auto_paste``
- * — the server's current settings captured at request time — so the client
- * can decide whether to chain a refine call and whether to fire the
- * synthetic-paste pipeline without relying on its own (possibly stale) copy
- * of capture_settings.
- */
-export interface CaptureCreateResponse extends CaptureResponse {
-  auto_refine: boolean;
-  allow_auto_paste: boolean;
-}
-
-export interface CaptureRefineRequest {
-  flags?: RefinementFlags;
-  model_size?: Qwen3ModelSize;
-}
-
-export interface CaptureRetranscribeRequest {
-  model?: WhisperModelSize;
-  language?: LanguageCode;
-}
-
-export interface CaptureSettings {
-  stt_model: WhisperModelSize;
-  language: string;
-  auto_refine: boolean;
-  llm_model: Qwen3ModelSize;
-  smart_cleanup: boolean;
-  self_correction: boolean;
-  preserve_technical: boolean;
-  allow_auto_paste: boolean;
-  default_playback_voice_id: string | null;
-  /** Whether the global keyboard hotkey is armed. Off by default — turning
-   *  this on triggers the macOS Input Monitoring TCC prompt. */
-  hotkey_enabled: boolean;
-  /** keytap key names. Defaults are platform-specific right-hand modifiers. */
-  chord_push_to_talk_keys: string[];
-  /** keytap key names. Toggle adds Space to the platform-specific PTT chord. */
-  chord_toggle_to_talk_keys: string[];
-}
-
-export type CaptureSettingsUpdate = Partial<CaptureSettings>;
-
-/**
- * One row in the dictation readiness checklist. ``model_name`` is the
- * canonical id understood by ``POST /models/download`` so the UI can wire a
- * one-click "Download" button without a second lookup.
- */
-export interface ModelReadiness {
-  ready: boolean;
-  model_name: string;
-  display_name: string;
-  size: string;
-  size_mb?: number | null;
-}
-
-/** Backend half of the dictation readiness check. The frontend combines this
- *  with TCC permission state into the full checklist used by useDictationReadiness. */
-export interface CaptureReadinessResponse {
-  stt: ModelReadiness;
-  llm: ModelReadiness;
-}
-
 export interface GenerationSettings {
   max_chunk_chars: number;
   crossfade_ms: number;
@@ -262,6 +160,19 @@ export interface TranscriptionRequest {
 export interface TranscriptionResponse {
   text: string;
   duration: number;
+}
+
+export interface TranscriptionJobStatus {
+  job_id: string;
+  status: 'pending' | 'running' | 'completed' | 'error';
+  progress: number; // 0–1
+  processed_seconds: number;
+  total_seconds: number;
+  text: string;
+  duration: number;
+  language: string;
+  error: string | null;
+  transcription_id: string | null;
 }
 
 export interface HealthResponse {
